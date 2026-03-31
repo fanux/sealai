@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SealAI Region/workspace</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;700&display=swap"
+    />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght@400"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="app-header">
+        <div class="brand-block">
+          <strong>SealAI</strong>
+          <span>Region/workspace</span>
+        </div>
+
+        <div class="header-actions">
+          <button class="header-icon-button" type="button" aria-label="通知" title="通知">
+            <span class="material-symbols-outlined">notifications</span>
+          </button>
+          <button class="header-icon-button" type="button" aria-label="设置" title="设置">
+            <span class="material-symbols-outlined">settings</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="app-main">
+        <aside class="side-rail">
+          <div id="navFilters" class="icon-rail"></div>
+        </aside>
+
+        <main class="canvas-shell">
+          <div id="canvasStage" class="canvas-stage">
+            <div id="canvasWorld" class="canvas-world">
+              <div class="canvas-grid"></div>
+              <svg id="edgeLayer" class="edge-layer" aria-hidden="true">
+                <defs>
+                  <marker
+                    id="edge-arrow"
+                    viewBox="0 0 10 10"
+                    refX="8"
+                    refY="5"
+                    markerWidth="6"
+                    markerHeight="6"
+                    orient="auto-start-reverse"
+                  >
+                    <path d="M 0 0 L 10 5 L 0 10 z"></path>
+                  </marker>
+                </defs>
+              </svg>
+              <div id="nodeLayer" class="node-layer"></div>
+            </div>
+          </div>
+        </main>
+
+        <aside class="chat-shell">
+          <div class="chat-title">聊天</div>
+          <div id="chatLog" class="chat-log"></div>
+
+          <form id="chatForm" class="chat-form">
+            <textarea
+              id="chatInput"
+              class="chat-input"
+              rows="5"
+              placeholder="输入 GitHub 仓库、镜像、数据库需求，或让 Agent 修复部署失败"
+            ></textarea>
+            <div class="chat-actions">
+              <button type="submit" class="send-button">发送</button>
+            </div>
+          </form>
+        </aside>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>

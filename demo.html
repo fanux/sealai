@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>SealAI - Agent Workspace</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300;400;500;600;700&amp;family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            colors: {
+              "on-tertiary": "#00692c",
+              "tertiary": "#c5ffc9",
+              "on-tertiary-container": "#005f28",
+              "on-tertiary-fixed": "#004a1d",
+              "surface-container": "#0f1930",
+              "inverse-surface": "#faf8ff",
+              "outline-variant": "#40485d",
+              "secondary-fixed-dim": "#48d4f3",
+              "surface-container-lowest": "#000000",
+              "secondary-fixed": "#65e1ff",
+              "on-primary": "#0f00a4",
+              "primary-container": "#9396ff",
+              "inverse-on-surface": "#4d556b",
+              "inverse-primary": "#494bd7",
+              "tertiary-container": "#6bff8f",
+              "on-surface-variant": "#a3aac4",
+              "tertiary-dim": "#5bf083",
+              "primary": "#a3a6ff",
+              "tertiary-fixed": "#6bff8f",
+              "error-dim": "#d73357",
+              "on-secondary-container": "#ecfaff",
+              "on-surface": "#dee5ff",
+              "on-secondary": "#004b58",
+              "surface-bright": "#1f2b49",
+              "on-background": "#dee5ff",
+              "on-primary-fixed-variant": "#0e009d",
+              "secondary-dim": "#40ceed",
+              "on-surface": "#dee5ff",
+              "on-secondary": "#004b58",
+              "surface-bright": "#1f2b49",
+              "on-background": "#dee5ff",
+              "on-primary-fixed-variant": "#0e009d",
+              "secondary-dim": "#40ceed",
+              "on-surface": "#dee5ff",
+              "on-secondary": "#004b58",
+              "surface-bright": "#1f2b49",
+              "on-background": "#dee5ff",
+              "on-primary-fixed-variant": "#0e009d",
+              "secondary-dim": "#40ceed",
+              "on-surface": "#dee5ff",
+              "on-secondary": "#004b58",
+              "surface-bright": "#1f2b49",
+              "on-background": "#dee5ff",
+              "on-primary-fixed-variant": "#0e009d",
+              "secondary-dim": "#40ceed",
+              "on-surface": "#dee5ff",
+              "on-secondary": "#004b58",
+              "surface-bright": "#1f2b49",
+              "on-background": "#dee5ff",
+              "on-primary-fixed-variant": "#0e009d",
+              "secondary-dim": "#40ceed",
+              "on-surface": "#dee5ff",
+              "on-secondary": "#004b58",
+              "surface-bright": "#1f2b49",
+              "on-background": "#dee5ff",
+              "on-primary-fixed-variant": "#0e009d",
+              "secondary-dim": "#40ceed",
+              "on-error-container": "#ffb2b9",
+              "surface-container-high": "#141f38",
+              "surface": "#060e20",
+              "secondary-container": "#00687a",
+              "surface-container-highest": "#192540",
+              "on-error": "#490013",
+              "tertiary-fixed-dim": "#5bf083",
+              "surface-dim": "#060e20",
+              "background": "#060e20",
+              "on-primary-container": "#0a0081",
+              "outline": "#6d758c",
+              "surface-tint": "#a3a6ff",
+              "surface-variant": "#192540",
+              "on-secondary-fixed": "#003a45",
+              "secondary": "#53ddfc",
+              "on-error-container": "#ffb2b9",
+              "surface-container-low": "#091328"
+            },
+            fontFamily: {
+              "headline": ["Space Grotesk"],
+              "body": ["Inter"],
+              "label": ["Inter"]
+            },
+            borderRadius: {"DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem"},
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            line-height: 1;
+        }
+        .canvas-grid {
+            background-image: radial-gradient(circle, rgba(163, 166, 255, 0.05) 1px, transparent 1px);
+            background-size: 32px 32px;
+        }
+        .node-path {
+            stroke-dasharray: 8;
+            animation: dash 20s linear infinite;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: -1000; }
+        }
+        .glass-blur {
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+    </style>
+</head>
+<body class="bg-surface text-on-surface font-body overflow-hidden h-screen flex flex-col">
+<!-- TopAppBar -->
+<header class="bg-[#060e20] text-[#a3a6ff] font-['Space_Grotesk'] tracking-tight flex justify-between items-center w-full px-6 py-3 h-14 z-50 border-b border-[#192540]/15">
+<div class="flex items-center gap-4">
+<span class="text-xl font-bold tracking-tighter text-[#a3a6ff]">SealAI</span>
+<div class="hidden md:flex items-center bg-[#091328] rounded px-3 py-1 gap-2 border border-outline-variant/15">
+<span class="material-symbols-outlined text-sm">search</span>
+<input class="bg-transparent border-none outline-none text-xs w-48 placeholder-on-surface-variant" placeholder="Search clusters..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="material-symbols-outlined p-1.5 rounded-md hover:bg-[#192540] transition-colors scale-95 duration-100">terminal</button>
+<button class="material-symbols-outlined p-1.5 rounded-md hover:bg-[#192540] transition-colors scale-95 duration-100">notifications</button>
+<button class="material-symbols-outlined p-1.5 rounded-md hover:bg-[#192540] transition-colors scale-95 duration-100">settings</button>
+<div class="w-8 h-8 rounded-full overflow-hidden border border-primary/20">
+<img alt="User profile" class="w-full h-full object-cover" data-alt="Close-up portrait of a professional male software developer in a studio with cool blue ambient lighting" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBb6NUmCsTLYD4fOa_oddf7_kab_LDsUoyz3uGf6amdl7Idp5oKpRkcatYNn9zg574YehzNau6ETxBqbGdQ2y9MYLaL4AjM8aufIDKm7pO8RSbJL2sKlT71zojXmevwqzP60DMfR-G4pNMsoctfT9XRfZV0UjLWS7YTOgn3JuK_8lzGx7-UpSL_veYJgXxdjwOIpLVko3H_2msks64NnMm2jgKb8GVs7ATnDULqBdqPIk2kaoyZtezS1iI-6z1dW1wGiThOJDMo4Rii"/>
+</div>
+</div>
+</header>
+<div class="flex flex-1 overflow-hidden relative">
+<!-- SideNavBar (Slim) -->
+<nav class="bg-[#091328] font-['Inter'] text-xs font-medium fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-16 border-r border-[#192540]/15 flex flex-col items-center justify-between py-4 z-40">
+<div class="flex flex-col gap-6 w-full items-center">
+<div class="bg-[#192540] text-[#a3a6ff] border-r-2 border-[#a3a6ff] w-full flex flex-col items-center py-4 transition-all duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined" data-weight="fill" style="font-variation-settings: 'FILL' 1;">inventory_2</span>
+</div>
+<div class="text-[#dee5ff]/40 flex flex-col items-center py-4 hover:text-[#dee5ff] hover:bg-[#0f1930] w-full transition-all duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">database</span>
+</div>
+<div class="text-[#dee5ff]/40 flex flex-col items-center py-4 hover:text-[#dee5ff] hover:bg-[#0f1930] w-full transition-all duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">terminal</span>
+</div>
+<div class="text-[#dee5ff]/40 flex flex-col items-center py-4 hover:text-[#dee5ff] hover:bg-[#0f1930] w-full transition-all duration-200 ease-in-out cursor-pointer">
+<span class="material-symbols-outlined">lan</span>
+</div>
+</div>
+<div class="flex flex-col gap-6 w-full items-center">
+<div class="text-[#dee5ff]/40 flex flex-col items-center py-4 hover:text-[#dee5ff] hover:bg-[#0f1930] w-full cursor-pointer">
+<span class="material-symbols-outlined">menu_book</span>
+</div>
+<div class="text-[#dee5ff]/40 flex flex-col items-center py-4 hover:text-[#dee5ff] hover:bg-[#0f1930] w-full cursor-pointer">
+<span class="material-symbols-outlined">help_outline</span>
+</div>
+</div>
+</nav>
+<!-- Main Canvas -->
+<main class="ml-16 mr-80 flex-1 relative canvas-grid overflow-hidden flex items-center justify-center">
+<!-- Topology Layer -->
+<svg class="absolute inset-0 w-full h-full pointer-events-none">
+<!-- Path Ingress -> Web -->
+<path d="M 280 400 L 450 400" fill="none" opacity="0.3" stroke="#a3a6ff" stroke-width="2"></path>
+<path class="node-path" d="M 280 400 L 450 400" fill="none" opacity="0.8" stroke="#53ddfc" stroke-width="2"></path>
+<!-- Path Web -> DB -->
+<path d="M 690 400 L 860 400" fill="none" opacity="0.3" stroke="#a3a6ff" stroke-width="2"></path>
+<path class="node-path" d="M 690 400 L 860 400" fill="none" opacity="0.8" stroke="#53ddfc" stroke-width="2"></path>
+</svg>
+<div class="flex items-center gap-32 relative z-10">
+<!-- Ingress Node -->
+<div class="bg-surface-container-highest border border-outline-variant/15 p-4 w-56 rounded-lg shadow-xl shadow-black/20 flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-lg">router</span>
+<span class="font-headline font-bold text-sm tracking-tight">Ingress</span>
+</div>
+<div class="w-2 h-2 bg-tertiary-dim rounded-full shadow-[0_0_8px_rgba(91,240,131,0.6)]"></div>
+</div>
+<div class="font-['JetBrains_Mono'] text-[10px] text-on-surface-variant bg-surface-container-lowest p-2 rounded-sm border border-outline-variant/10">
+                        sealai.app/v1
+                    </div>
+</div>
+<!-- Web Frontend Node -->
+<div class="bg-surface-container-highest border border-outline-variant/15 p-4 w-60 rounded-lg shadow-xl shadow-black/20 flex flex-col gap-3 relative">
+<div class="absolute -top-1 -right-1 bg-primary text-on-primary text-[8px] px-1.5 py-0.5 rounded-full font-bold uppercase tracking-widest">Active</div>
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary text-lg">inventory_2</span>
+<span class="font-headline font-bold text-sm tracking-tight">Web-Frontend-v1</span>
+</div>
+<div class="w-2 h-2 bg-tertiary-dim rounded-full shadow-[0_0_8px_rgba(91,240,131,0.6)]"></div>
+</div>
+<div class="flex flex-col gap-1.5">
+<div class="flex items-center justify-between text-[10px] text-on-surface-variant">
+<span>CPU</span>
+<span class="text-secondary">12%</span>
+</div>
+<div class="h-1 bg-surface-container-lowest rounded-full overflow-hidden">
+<div class="h-full bg-secondary w-[12%]"></div>
+</div>
+</div>
+<div class="font-['JetBrains_Mono'] text-[10px] text-on-surface-variant bg-surface-container-lowest p-2 rounded-sm border border-outline-variant/10">
+                        80:3000/TCP
+                    </div>
+</div>
+<!-- Database Node -->
+<div class="bg-surface-container-highest border border-outline-variant/15 p-4 w-56 rounded-lg shadow-xl shadow-black/20 flex flex-col gap-3">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary-dim text-lg">database</span>
+<span class="font-headline font-bold text-sm tracking-tight">User-DB</span>
+</div>
+<div class="w-2 h-2 bg-tertiary-dim rounded-full shadow-[0_0_8px_rgba(91,240,131,0.6)]"></div>
+</div>
+<div class="flex items-center gap-2 text-[10px] text-on-surface-variant">
+<span class="material-symbols-outlined text-xs">storage</span>
+<span>PostgreSQL 15</span>
+</div>
+<div class="font-['JetBrains_Mono'] text-[10px] text-on-surface-variant bg-surface-container-lowest p-2 rounded-sm border border-outline-variant/10">
+                        5432/TCP
+                    </div>
+</div>
+</div>
+<!-- Canvas Controls -->
+<div class="absolute bottom-8 left-8 flex gap-2">
+<button class="bg-surface-container-high p-2 rounded-md border border-outline-variant/20 hover:bg-surface-container-highest transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">add</span>
+</button>
+<button class="bg-surface-container-high p-2 rounded-md border border-outline-variant/20 hover:bg-surface-container-highest transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">remove</span>
+</button>
+<button class="bg-surface-container-high p-2 rounded-md border border-outline-variant/20 hover:bg-surface-container-highest transition-colors">
+<span class="material-symbols-outlined text-on-surface-variant">recenter</span>
+</button>
+</div>
+</main>
+<!-- NavigationDrawer (Chat Panel) -->
+<aside class="bg-[#091328] backdrop-blur-md font-['JetBrains_Mono'] text-sm fixed right-0 top-14 h-[calc(100vh-3.5rem)] w-80 border-l border-[#192540]/15 flex flex-col p-0 z-40 shadow-2xl shadow-black/40">
+<!-- Header -->
+<div class="p-4 border-b border-[#192540]/30">
+<div class="flex items-center justify-between mb-1">
+<h2 class="text-indigo-400 font-bold">SealAI Agent</h2>
+<span class="bg-tertiary/10 text-tertiary text-[10px] px-2 py-0.5 rounded-full border border-tertiary/20">ONLINE</span>
+</div>
+<p class="text-[11px] text-[#dee5ff]/50">Autonomous Logic Engine</p>
+</div>
+<!-- Tabs -->
+<div class="flex border-b border-[#192540]/30">
+<button class="flex-1 py-3 text-[11px] flex flex-col items-center gap-1 border-b-2 border-[#53ddfc] text-[#53ddfc]">
+<span class="material-symbols-outlined text-lg">psychology</span>
+                    Context
+                </button>
+<button class="flex-1 py-3 text-[11px] flex flex-col items-center gap-1 text-[#dee5ff]/50 hover:bg-[#192540]/50 transition-all">
+<span class="material-symbols-outlined text-lg">history</span>
+                    History
+                </button>
+<button class="flex-1 py-3 text-[11px] flex flex-col items-center gap-1 text-[#dee5ff]/50 hover:bg-[#192540]/50 transition-all">
+<span class="material-symbols-outlined text-lg">data_object</span>
+                    Variables
+                </button>
+</div>
+<!-- Chat Content -->
+<div class="flex-1 overflow-y-auto p-4 space-y-6">
+<!-- User Message -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2 text-[10px] text-on-surface-variant/70">
+<span class="material-symbols-outlined text-xs">person</span>
+                        USER
+                    </div>
+<div class="bg-surface-container text-on-surface p-3 rounded-lg rounded-tr-none text-[12px] leading-relaxed border border-outline-variant/10">
+                        Deploy my GitHub project: <span class="underline text-secondary">https://github.com/user/demo-app</span>
+</div>
+</div>
+<!-- AI Response -->
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2 text-[10px] text-primary/70">
+<span class="material-symbols-outlined text-xs" data-weight="fill" style="font-variation-settings: 'FILL' 1;">smart_toy</span>
+                        SEALAI_AGENT
+                    </div>
+<div class="space-y-3">
+<div class="bg-[#192540]/50 text-on-surface p-3 rounded-lg rounded-tl-none text-[12px] leading-relaxed border-l-2 border-primary">
+<div class="flex flex-col gap-2">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary-dim text-[14px]">check_circle</span>
+<span>Analyzing repository... Found Node.js environment.</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary-dim text-[14px]">check_circle</span>
+<span>Generating Dockerfile...</span>
+</div>
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-tertiary-dim text-[14px]">check_circle</span>
+<span>Building image...</span>
+</div>
+<div class="flex items-center gap-2 font-bold text-tertiary-dim">
+<span class="material-symbols-outlined text-[14px]">rocket_launch</span>
+<span>Deployment successful.</span>
+</div>
+</div>
+</div>
+<div class="bg-[#192540]/50 text-on-surface p-3 rounded-lg rounded-tl-none text-[12px] leading-relaxed border-l-2 border-primary">
+                            I've added the nodes to your canvas. The Ingress route is automatically configured to point to the frontend container.
+                        </div>
+</div>
+</div>
+</div>
+<!-- Chat Footer -->
+<div class="p-4 bg-[#091328]">
+<div class="flex flex-col gap-3">
+<div class="relative">
+<textarea class="w-full bg-surface-container-lowest border border-outline-variant/20 rounded-md p-3 pr-10 text-[12px] focus:border-secondary outline-none resize-none h-20 transition-all" placeholder="Message Agent..."></textarea>
+<button class="absolute bottom-3 right-3 text-secondary hover:text-secondary-fixed transition-colors">
+<span class="material-symbols-outlined">send</span>
+</button>
+</div>
+<button class="bg-gradient-to-br from-primary to-primary-container text-on-primary py-2.5 rounded-md text-[11px] font-bold uppercase tracking-wider shadow-lg shadow-primary/10 hover:brightness-110 active:scale-95 transition-all">
+                        Deploy Agent
+                    </button>
+</div>
+</div>
+</aside>
+</div>
+</body></html>
