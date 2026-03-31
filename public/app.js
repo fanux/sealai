@@ -955,24 +955,34 @@
             method === 'csv'
               ? `<label class="db-config-label">
                   <span>CSV 文件</span>
-                  <input
-                    class="agui-input"
-                    type="text"
-                    value="${escapeHtml(draft.csvName || '')}"
-                    placeholder="orders_export.csv"
-                    data-db-import-field="csvName"
-                  />
+                  <label class="db-file-picker">
+                    <input
+                      class="db-file-input"
+                      type="file"
+                      accept=".csv,text/csv"
+                      data-db-import-upload="csvName"
+                    />
+                    <span class="db-file-trigger">上传 CSV</span>
+                  </label>
+                  <div class="db-file-name ${draft.csvName ? 'selected' : ''}">
+                    ${escapeHtml(draft.csvName || '未选择文件')}
+                  </div>
                 </label>`
               : method === 'dmp'
               ? `<label class="db-config-label">
                   <span>DMP 文件</span>
-                  <input
-                    class="agui-input"
-                    type="text"
-                    value="${escapeHtml(draft.dmpName || '')}"
-                    placeholder="orders_snapshot.dmp"
-                    data-db-import-field="dmpName"
-                  />
+                  <label class="db-file-picker">
+                    <input
+                      class="db-file-input"
+                      type="file"
+                      accept=".dmp,.dump,application/octet-stream"
+                      data-db-import-upload="dmpName"
+                    />
+                    <span class="db-file-trigger">上传 DMP</span>
+                  </label>
+                  <div class="db-file-name ${draft.dmpName ? 'selected' : ''}">
+                    ${escapeHtml(draft.dmpName || '未选择文件')}
+                  </div>
                 </label>`
               : `<label class="db-config-label">
                   <span>公开数据库地址</span>
@@ -2112,6 +2122,20 @@
         state.databaseView.importDraft[input.dataset.dbImportField] = input.value;
         state.databaseView.importStatus = 'idle';
         state.databaseView.importError = '';
+      });
+
+      dom.canvasWorkspace.addEventListener('change', (event) => {
+        const input = event.target.closest('[data-db-import-upload]');
+        if (!input || !state.databaseView) {
+          return;
+        }
+
+        const field = input.dataset.dbImportUpload;
+        const file = input.files && input.files[0];
+        state.databaseView.importDraft[field] = file ? file.name : '';
+        state.databaseView.importStatus = 'idle';
+        state.databaseView.importError = '';
+        renderCanvasWorkspace();
       });
     }
 

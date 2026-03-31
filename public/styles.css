@@ -512,6 +512,50 @@ button {
   gap: 8px;
 }
 
+.db-file-picker {
+  position: relative;
+  display: inline-flex;
+  width: fit-content;
+}
+
+.db-file-input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.db-file-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.db-file-picker:hover .db-file-trigger {
+  border-color: var(--primary);
+}
+
+.db-file-name {
+  min-height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: rgba(11, 20, 41, 0.82);
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-file-name.selected {
+  color: var(--text);
+}
+
 .db-import-footer {
   display: flex;
   align-items: center;
