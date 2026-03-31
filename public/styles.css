@@ -120,7 +120,7 @@ button {
 .app-main {
   min-height: 0;
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) 360px;
+  grid-template-columns: 56px minmax(0, 1fr) 480px;
 }
 
 .side-rail,
@@ -189,6 +189,10 @@ button {
 
 .rail-icon-button[data-accent='github'] {
   color: #d8e0f5;
+}
+
+.rail-icon-button[data-accent='vscode'] {
+  color: #3ea6ff;
 }
 
 .rail-icon-button::after {
@@ -455,6 +459,10 @@ button {
   justify-content: flex-end;
 }
 
+.chat-message.agui-message {
+  align-items: stretch;
+}
+
 .chat-avatar {
   width: 26px;
   height: 26px;
@@ -480,6 +488,316 @@ button {
   white-space: pre-wrap;
   font-size: 12px;
   line-height: 1.6;
+}
+
+.agui-card {
+  flex: 1;
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 28%),
+    rgba(12, 20, 38, 0.98);
+}
+
+.agui-card-header,
+.agui-card-footer,
+.agui-inline-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.agui-card-header strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.agui-card-header span,
+.agui-method-copy,
+.agui-status {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agui-card-pill,
+.agui-repo-chip {
+  height: 24px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  background: var(--panel);
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  white-space: nowrap;
+}
+
+.agui-card-pill.connected {
+  color: var(--success);
+  border-color: rgba(113, 242, 157, 0.28);
+}
+
+.agui-methods {
+  display: grid;
+  gap: 10px;
+}
+
+.agui-method {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(9, 19, 40, 0.88);
+}
+
+.agui-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.agui-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.agui-grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.agui-method-title {
+  color: var(--text);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.agui-input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--line-2);
+  background: #091328;
+  color: var(--text);
+  outline: none;
+}
+
+.agui-input:focus {
+  border-color: var(--primary);
+}
+
+.agui-textarea,
+.agui-select {
+  width: 100%;
+  border: 1px solid var(--line-2);
+  background: #091328;
+  color: var(--text);
+  outline: none;
+}
+
+.agui-textarea {
+  min-height: 82px;
+  padding: 10px;
+  resize: vertical;
+  font: 12px/1.55 var(--font-body);
+}
+
+.agui-select {
+  height: 34px;
+  padding: 0 10px;
+}
+
+.agui-textarea:focus,
+.agui-select:focus {
+  border-color: var(--primary);
+}
+
+.agui-checkline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.agui-checkline input {
+  margin: 0;
+}
+
+.agui-primary-button,
+.agui-secondary-button {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  background: var(--panel-2);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.agui-primary-button:hover,
+.agui-secondary-button:hover {
+  border-color: var(--primary);
+}
+
+.agui-primary-button[disabled] {
+  cursor: progress;
+  opacity: 0.7;
+}
+
+.agui-app-list {
+  display: grid;
+  gap: 8px;
+}
+
+.agui-app-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  background: #091328;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.agui-app-item:hover,
+.agui-app-item.active {
+  border-color: var(--primary);
+  background: rgba(18, 31, 58, 0.96);
+}
+
+.agui-app-icon {
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--app-accent, var(--line-2));
+  background: linear-gradient(135deg, var(--app-accent, #6bdcff), rgba(9, 19, 40, 0.32));
+  color: #04101d;
+  font: 10px var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.agui-app-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.agui-app-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agui-app-copy span,
+.agui-app-meta,
+.agui-empty {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agui-app-meta {
+  white-space: nowrap;
+  padding-left: 8px;
+  font: 10px var(--font-mono);
+}
+
+.agui-empty {
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  background: #091328;
+}
+
+.agui-template-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.agui-template-item {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  background: #091328;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.agui-template-item:hover,
+.agui-template-item.active {
+  border-color: var(--primary);
+  background: rgba(18, 31, 58, 0.96);
+}
+
+.agui-template-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--template-accent, var(--line-2));
+  background: linear-gradient(135deg, var(--template-accent, #6bdcff), rgba(9, 19, 40, 0.32));
+  color: #04101d;
+  font: 10px var(--font-mono);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.agui-template-copy {
+  min-width: 0;
+  display: block;
+}
+
+.agui-template-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agui-status.error {
+  color: #ff9ab1;
+}
+
+@media (max-width: 1360px) {
+  .agui-grid-2,
+  .agui-grid-4 {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1080px) {
+  .agui-grid-2,
+  .agui-grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .agui-app-item {
+    grid-template-columns: 40px minmax(0, 1fr);
+  }
+
+  .agui-app-meta {
+    padding-left: 0;
+  }
+
+  .agui-template-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .agui-template-item {
+    grid-template-columns: 36px minmax(0, 1fr);
+  }
 }
 
 .chat-form {
