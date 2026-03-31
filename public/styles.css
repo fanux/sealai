@@ -223,15 +223,553 @@ button {
 }
 
 .canvas-stage {
+  position: relative;
   width: 100%;
   height: 100%;
   overflow: auto;
+}
+
+.canvas-stage.workspace-mode {
+  overflow: hidden;
+}
+
+.canvas-stage.workspace-mode .canvas-world {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .canvas-world {
   position: relative;
   width: max(100%, 1280px);
   height: max(100%, 820px);
+}
+
+.canvas-workspace {
+  position: absolute;
+  inset: 0;
+  display: none;
+  background:
+    radial-gradient(circle at top left, rgba(83, 221, 252, 0.06), transparent 24%),
+    linear-gradient(180deg, rgba(6, 14, 32, 0.98), rgba(6, 14, 32, 1));
+  z-index: 5;
+}
+
+.canvas-workspace.active {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.db-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(7, 17, 34, 0.92);
+}
+
+.db-workspace-copy {
+  min-width: 0;
+}
+
+.db-workspace-title {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-display);
+  font-size: 18px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.db-workspace-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-workspace-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.db-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  background: rgba(11, 20, 41, 0.82);
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  white-space: nowrap;
+}
+
+.db-ghost-button,
+.db-primary-button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--line-2);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.db-primary-button {
+  background: var(--panel-2);
+}
+
+.db-ghost-button:hover,
+.db-primary-button:hover {
+  border-color: var(--primary);
+}
+
+.db-workspace-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.db-nav {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px 12px;
+  border-right: 1px solid var(--line);
+  background: rgba(9, 18, 36, 0.96);
+}
+
+.db-nav-label {
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.db-database-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.db-database-group {
+  display: grid;
+  gap: 6px;
+}
+
+.db-database-button,
+.db-table-button,
+.db-tab-button {
+  width: 100%;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.db-database-button {
+  padding: 9px 10px;
+}
+
+.db-database-button.active,
+.db-table-button.active,
+.db-tab-button.active {
+  border-color: var(--primary);
+  background: var(--panel-2);
+}
+
+.db-database-button strong,
+.db-table-button strong {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.db-entity-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-entity-icon {
+  font-size: 16px;
+  color: var(--text-soft);
+}
+
+.db-database-button span,
+.db-table-button span,
+.db-stat-card span,
+.db-empty-state,
+.db-table-hint,
+.db-index-row span,
+.db-schema-table td,
+.db-data-table td {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-table-list {
+  display: grid;
+  gap: 6px;
+  padding-left: 10px;
+}
+
+.db-table-button {
+  padding: 8px 10px;
+}
+
+.db-main {
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 12px;
+  padding: 14px 16px 18px;
+}
+
+.db-main-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-start;
+  gap: 16px;
+}
+
+.db-main-title {
+  margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.db-main-subtitle {
+  margin: 4px 0 0;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-import-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 28%),
+    rgba(10, 18, 35, 0.98);
+}
+
+.db-import-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.db-import-head strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.db-import-head span {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-import-methods {
+  display: flex;
+  gap: 8px;
+}
+
+.db-import-method {
+  min-width: 68px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
+.db-import-method.active {
+  border-color: var(--primary);
+  background: var(--panel-2);
+  color: var(--text);
+}
+
+.db-import-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.db-import-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.db-main-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.db-stat-card {
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(11, 20, 41, 0.92);
+}
+
+.db-stat-card strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.db-tabs {
+  display: flex;
+  gap: 8px;
+}
+
+.db-tab-button {
+  width: auto;
+  height: 30px;
+  padding: 0 10px;
+  font-size: 11px;
+}
+
+.db-panel {
+  min-height: 0;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 35, 0.98);
+  overflow: auto;
+}
+
+.db-panel-inner {
+  min-width: 760px;
+}
+
+.db-data-table,
+.db-schema-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.db-data-table th,
+.db-data-table td,
+.db-schema-table th,
+.db-schema-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(152, 160, 255, 0.08);
+  vertical-align: top;
+}
+
+.db-data-table th,
+.db-schema-table th {
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  background: rgba(12, 20, 38, 0.98);
+  position: sticky;
+  top: 0;
+}
+
+.db-data-table td,
+.db-schema-table td {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.db-index-list {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+}
+
+.db-er-panel {
+  overflow: auto;
+}
+
+.db-er-stage {
+  position: relative;
+  min-width: 640px;
+  padding: 18px;
+}
+
+.db-er-layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.db-er-path {
+  fill: none;
+  stroke: rgba(83, 221, 252, 0.72);
+  stroke-width: 2;
+  stroke-dasharray: 8 8;
+}
+
+.db-er-label {
+  fill: var(--text-soft);
+  font: 10px var(--font-mono);
+  paint-order: stroke;
+  stroke: rgba(10, 18, 35, 0.98);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+.db-er-card {
+  position: absolute;
+  width: 228px;
+  min-height: 132px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 24%),
+    rgba(12, 20, 38, 0.98);
+}
+
+.db-er-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.db-er-card-head strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.db-er-columns {
+  display: grid;
+  gap: 6px;
+}
+
+.db-er-column,
+.db-er-more {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-er-column em,
+.db-er-more {
+  color: var(--text-soft);
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 10px;
+}
+
+.db-index-row,
+.db-sql-block {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: rgba(11, 20, 41, 0.82);
+}
+
+.db-index-row strong {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.db-sql-block pre {
+  margin: 0;
+  color: var(--text);
+  font: 11px/1.6 var(--font-mono);
+  white-space: pre-wrap;
+}
+
+.chat-context {
+  display: none;
+  margin-bottom: 12px;
+}
+
+.chat-context.active {
+  display: block;
+}
+
+.db-config-card {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line-2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 28%),
+    rgba(12, 20, 38, 0.98);
+}
+
+.db-config-header,
+.db-config-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.db-config-header strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.db-config-header span,
+.db-config-status,
+.db-config-copy {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-config-section {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(9, 19, 40, 0.88);
+}
+
+.db-config-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.db-config-label {
+  display: grid;
+  gap: 4px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-config-status.pending {
+  color: var(--warning);
+}
+
+.db-config-status.saved {
+  color: var(--success);
+}
+
+.db-config-status.error {
+  color: #ff9ab1;
 }
 
 .canvas-grid,
@@ -775,11 +1313,36 @@ button {
   .agui-grid-4 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .db-workspace-body {
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
 }
 
 @media (max-width: 1080px) {
   .agui-grid-2,
   .agui-grid-4 {
+    grid-template-columns: 1fr;
+  }
+
+  .db-workspace-body,
+  .db-config-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .db-nav {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .db-main-header,
+  .db-config-header,
+  .db-config-footer {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .db-main-stats {
     grid-template-columns: 1fr;
   }
 
@@ -884,6 +1447,10 @@ button {
     border-left: 0;
     border-top: 1px solid var(--line);
   }
+
+  .canvas-stage.workspace-mode {
+    overflow: auto;
+  }
 }
 
 @media (max-width: 820px) {
@@ -916,5 +1483,10 @@ button {
 
   .chat-shell {
     border-top: 1px solid var(--line);
+  }
+
+  .db-workspace-header {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

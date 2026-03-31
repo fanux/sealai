@@ -170,6 +170,9 @@
     edgeLayer: document.getElementById('edgeLayer'),
     canvasStage: document.getElementById('canvasStage'),
     canvasWorld: document.getElementById('canvasWorld'),
+    canvasWorkspace: document.getElementById('canvasWorkspace'),
+    chatTitle: document.getElementById('chatTitle'),
+    chatContext: document.getElementById('chatContext'),
     chatLog: document.getElementById('chatLog'),
     chatForm: document.getElementById('chatForm'),
     chatInput: document.getElementById('chatInput'),
@@ -190,9 +193,11 @@
     agentBusy: false,
     currentTask: '待命',
     lastIssue: null,
+    databaseView: null,
   };
 
   let rafHandle = 0;
+  const DEFAULT_CHAT_PLACEHOLDER = '输入 GitHub 仓库、镜像、数据库需求，或让 Agent 修复部署失败';
 
   function createId(prefix) {
     return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -200,6 +205,879 @@
 
   function wait(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function slugifyText(text) {
+    return String(text || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '') || 'workspace';
+  }
+
+  function databaseFlavorFromNode(node) {
+    const connect = String(node && node.details && node.details.connect ? node.details.connect : '').toLowerCase();
+    const title = String(node && node.title ? node.title : '').toLowerCase();
+
+    if (connect.startsWith('postgres') || /postgres|pgsql/.test(title)) {
+      return 'PostgreSQL';
+    }
+
+    if (connect.startsWith('mysql') || /mysql/.test(title)) {
+      return 'MySQL';
+    }
+
+    if (connect.startsWith('redis') || /redis/.test(title)) {
+      return 'Redis';
+    }
+
+    if (connect.startsWith('mongodb') || /mongo/.test(title)) {
+      return 'MongoDB';
+    }
+
+    return 'PostgreSQL';
+  }
+
+  function supportsDatabaseWorkspace(node) {
+    return Boolean(node && node.type === 'database' && databaseFlavorFromNode(node) === 'PostgreSQL');
+  }
+
+  function databaseSpecProfile(instanceSpec) {
+    const profiles = {
+      'db.mysql.small': { cpu: '1', memory: '2Gi' },
+      'db.mysql.medium': { cpu: '2', memory: '4Gi' },
+      'db.mysql.large': { cpu: '4', memory: '8Gi' },
+      'db.pg.small': { cpu: '2', memory: '4Gi' },
+      'db.pg.medium': { cpu: '4', memory: '8Gi' },
+      'db.pg.large': { cpu: '8', memory: '16Gi' },
+      'db.redis.small': { cpu: '1', memory: '2Gi' },
+      'db.redis.medium': { cpu: '2', memory: '4Gi' },
+      'db.redis.large': { cpu: '4', memory: '8Gi' },
+      'db.mongo.small': { cpu: '2', memory: '4Gi' },
+      'db.mongo.medium': { cpu: '4', memory: '8Gi' },
+      'db.mongo.large': { cpu: '8', memory: '16Gi' },
+    };
+
+    return profiles[instanceSpec] || { cpu: '2', memory: '4Gi' };
+  }
+
+  function defaultDatabaseVersion(flavor) {
+    if (flavor === 'PostgreSQL') {
+      return '16.4';
+    }
+
+    if (flavor === 'MySQL') {
+      return '8.4';
+    }
+
+    if (flavor === 'Redis') {
+      return '7.2';
+    }
+
+    if (flavor === 'MongoDB') {
+      return '7.0';
+    }
+
+    return 'latest';
+  }
+
+  function inferDatabaseReplicas(node, fallback) {
+    const text = [node && node.subtitle, ...(node && node.tags ? node.tags : [])].join(' ');
+    const match = String(text).match(/(\d+)\s*副本/);
+    return match ? match[1] : String(fallback || '2');
+  }
+
+  function inferDatabaseInstanceSpec(node, flavor) {
+    const text = [node && node.subtitle, ...(node && node.tags ? node.tags : [])].join(' ');
+    const match = String(text).match(/db\.[a-z.]+/i);
+    if (match) {
+      return match[0];
+    }
+
+    if (flavor === 'PostgreSQL') {
+      return /ha/i.test(String(node && node.title ? node.title : '')) ? 'db.pg.large' : 'db.pg.medium';
+    }
+
+    if (flavor === 'MySQL') {
+      return 'db.mysql.medium';
+    }
+
+    if (flavor === 'Redis') {
+      return 'db.redis.medium';
+    }
+
+    if (flavor === 'MongoDB') {
+      return 'db.mongo.medium';
+    }
+
+    return 'db.pg.medium';
+  }
+
+  function inferDatabaseName(node) {
+    const connect = String(node && node.details && node.details.connect ? node.details.connect : '');
+    const connectMatch = connect.match(/\/([a-z0-9_]+)$/i);
+    if (connectMatch) {
+      return connectMatch[1];
+    }
+
+    const title = String(node && node.title ? node.title : '');
+    if (/orders/i.test(title)) {
+      return 'orders';
+    }
+    if (/dify/i.test(title)) {
+      return 'dify';
+    }
+    if (/n8n/i.test(title)) {
+      return 'n8n';
+    }
+    if (/metabase/i.test(title)) {
+      return 'metabase';
+    }
+
+    return slugifyText(title.replace(/\b(cluster|data|postgresql|ha)\b/gi, '')) || 'workspace';
+  }
+
+  function createDatabaseConfig(flavor, options = {}) {
+    const instanceSpec = options.instanceSpec || inferDatabaseInstanceSpec(options.node, flavor);
+    const profile = databaseSpecProfile(instanceSpec);
+
+    return {
+      flavor,
+      version: options.version || defaultDatabaseVersion(flavor),
+      instanceSpec,
+      cpu: String(options.cpu || profile.cpu),
+      memory: String(options.memory || profile.memory),
+      replicas: String(options.replicas || inferDatabaseReplicas(options.node, '2')),
+      storage: String(options.storage || (flavor === 'PostgreSQL' ? '200Gi' : '100Gi')),
+      backupPolicy: String(
+        options.backupPolicy ||
+          ((options.node && options.node.details && options.node.details.backup) || 'PITR / Hourly')
+      ),
+    };
+  }
+
+  function createWorkspaceTable(name, columns, rows, indexes) {
+    const ddl = [
+      `CREATE TABLE public.${name} (`,
+      columns
+        .map((column) => {
+          const parts = [`  ${column.name} ${column.type}`];
+          if (column.constraints) {
+            parts.push(column.constraints);
+          }
+          if (column.default) {
+            parts.push(`DEFAULT ${column.default}`);
+          }
+          return parts.join(' ');
+        })
+        .join(',\n'),
+      ');',
+    ].join('\n');
+
+    return {
+      id: name,
+      name,
+      rowCount: rows.length,
+      columns,
+      rows,
+      indexes,
+      ddl,
+    };
+  }
+
+  function postgresCatalogPreset(databaseName) {
+    const base = databaseName.toLowerCase();
+
+    if (base.includes('orders')) {
+      return [
+        createWorkspaceTable(
+          'users',
+          [
+            { name: 'id', type: 'uuid', constraints: 'PRIMARY KEY', default: 'gen_random_uuid()' },
+            { name: 'email', type: 'text', constraints: 'NOT NULL UNIQUE' },
+            { name: 'role', type: 'text', constraints: 'NOT NULL' },
+            { name: 'created_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+          ],
+          [
+            { id: 'usr_001', email: 'alice@orders.dev', role: 'admin', created_at: '2026-03-28 10:12' },
+            { id: 'usr_002', email: 'ops@orders.dev', role: 'operator', created_at: '2026-03-29 09:04' },
+            { id: 'usr_003', email: 'finance@orders.dev', role: 'viewer', created_at: '2026-03-30 16:21' },
+          ],
+          [
+            { name: 'users_pkey', type: 'btree', unique: true, columns: 'id', size: '24 kB' },
+            { name: 'users_email_key', type: 'btree', unique: true, columns: 'email', size: '32 kB' },
+          ],
+        ),
+        createWorkspaceTable(
+          'orders',
+          [
+            { name: 'id', type: 'bigserial', constraints: 'PRIMARY KEY' },
+            { name: 'user_id', type: 'uuid', constraints: 'NOT NULL' },
+            { name: 'status', type: 'text', constraints: 'NOT NULL', default: "'paid'" },
+            { name: 'amount', type: 'numeric(10,2)', constraints: 'NOT NULL' },
+            { name: 'created_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+          ],
+          [
+            { id: 1012, user_id: 'usr_001', status: 'paid', amount: '329.00', created_at: '2026-03-31 09:15' },
+            { id: 1013, user_id: 'usr_002', status: 'pending', amount: '120.50', created_at: '2026-03-31 09:34' },
+            { id: 1014, user_id: 'usr_003', status: 'paid', amount: '54.00', created_at: '2026-03-31 10:11' },
+          ],
+          [
+            { name: 'orders_pkey', type: 'btree', unique: true, columns: 'id', size: '16 kB' },
+            { name: 'orders_created_at_idx', type: 'btree', unique: false, columns: 'created_at DESC', size: '24 kB' },
+          ],
+        ),
+        createWorkspaceTable(
+          'payments',
+          [
+            { name: 'id', type: 'bigserial', constraints: 'PRIMARY KEY' },
+            { name: 'order_id', type: 'bigint', constraints: 'NOT NULL' },
+            { name: 'provider', type: 'text', constraints: 'NOT NULL' },
+            { name: 'paid_at', type: 'timestamptz' },
+            { name: 'meta', type: 'jsonb', constraints: 'NOT NULL', default: "'{}'::jsonb" },
+          ],
+          [
+            { id: 8801, order_id: 1012, provider: 'stripe', paid_at: '2026-03-31 09:16', meta: '{"fee":"3.2"}' },
+            { id: 8802, order_id: 1014, provider: 'paypal', paid_at: '2026-03-31 10:13', meta: '{"fee":"2.1"}' },
+          ],
+          [
+            { name: 'payments_pkey', type: 'btree', unique: true, columns: 'id', size: '16 kB' },
+            { name: 'payments_order_id_idx', type: 'btree', unique: false, columns: 'order_id', size: '16 kB' },
+          ],
+        ),
+      ];
+    }
+
+    if (base.includes('dify')) {
+      return [
+        createWorkspaceTable(
+          'apps',
+          [
+            { name: 'id', type: 'uuid', constraints: 'PRIMARY KEY', default: 'gen_random_uuid()' },
+            { name: 'name', type: 'text', constraints: 'NOT NULL' },
+            { name: 'mode', type: 'text', constraints: 'NOT NULL' },
+            { name: 'created_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+          ],
+          [
+            { id: 'app_01', name: '客服助手', mode: 'chat', created_at: '2026-03-30 08:20' },
+            { id: 'app_02', name: '文档问答', mode: 'workflow', created_at: '2026-03-31 09:48' },
+          ],
+          [{ name: 'apps_pkey', type: 'btree', unique: true, columns: 'id', size: '16 kB' }],
+        ),
+        createWorkspaceTable(
+          'conversations',
+          [
+            { name: 'id', type: 'uuid', constraints: 'PRIMARY KEY' },
+            { name: 'app_id', type: 'uuid', constraints: 'NOT NULL' },
+            { name: 'user_id', type: 'uuid', constraints: 'NOT NULL' },
+            { name: 'message_count', type: 'integer', constraints: 'NOT NULL', default: '0' },
+            { name: 'updated_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+          ],
+          [
+            { id: 'conv_01', app_id: 'app_01', user_id: 'usr_11', message_count: 18, updated_at: '2026-03-31 10:02' },
+            { id: 'conv_02', app_id: 'app_02', user_id: 'usr_12', message_count: 6, updated_at: '2026-03-31 10:10' },
+          ],
+          [{ name: 'conversations_pkey', type: 'btree', unique: true, columns: 'id', size: '16 kB' }],
+        ),
+      ];
+    }
+
+    if (base.includes('n8n')) {
+      return [
+        createWorkspaceTable(
+          'workflows',
+          [
+            { name: 'id', type: 'bigserial', constraints: 'PRIMARY KEY' },
+            { name: 'name', type: 'text', constraints: 'NOT NULL' },
+            { name: 'active', type: 'boolean', constraints: 'NOT NULL', default: 'false' },
+            { name: 'updated_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+          ],
+          [
+            { id: 11, name: 'Slack Intake', active: true, updated_at: '2026-03-31 09:11' },
+            { id: 12, name: 'CRM Sync', active: false, updated_at: '2026-03-31 08:54' },
+          ],
+          [{ name: 'workflows_pkey', type: 'btree', unique: true, columns: 'id', size: '16 kB' }],
+        ),
+        createWorkspaceTable(
+          'executions',
+          [
+            { name: 'id', type: 'bigserial', constraints: 'PRIMARY KEY' },
+            { name: 'workflow_id', type: 'bigint', constraints: 'NOT NULL' },
+            { name: 'status', type: 'text', constraints: 'NOT NULL' },
+            { name: 'started_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+          ],
+          [
+            { id: 201, workflow_id: 11, status: 'success', started_at: '2026-03-31 09:59' },
+            { id: 202, workflow_id: 11, status: 'success', started_at: '2026-03-31 10:07' },
+            { id: 203, workflow_id: 12, status: 'failed', started_at: '2026-03-31 10:09' },
+          ],
+          [{ name: 'executions_workflow_id_idx', type: 'btree', unique: false, columns: 'workflow_id', size: '24 kB' }],
+        ),
+      ];
+    }
+
+    return [
+      createWorkspaceTable(
+        'accounts',
+        [
+          { name: 'id', type: 'uuid', constraints: 'PRIMARY KEY', default: 'gen_random_uuid()' },
+          { name: 'name', type: 'text', constraints: 'NOT NULL' },
+          { name: 'plan', type: 'text', constraints: 'NOT NULL', default: "'pro'" },
+          { name: 'created_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+        ],
+        [
+          { id: 'acc_01', name: 'Acme', plan: 'pro', created_at: '2026-03-25 09:00' },
+          { id: 'acc_02', name: 'Northwind', plan: 'enterprise', created_at: '2026-03-28 14:20' },
+        ],
+        [{ name: 'accounts_pkey', type: 'btree', unique: true, columns: 'id', size: '16 kB' }],
+      ),
+      createWorkspaceTable(
+        'audit_logs',
+        [
+          { name: 'id', type: 'bigserial', constraints: 'PRIMARY KEY' },
+          { name: 'actor', type: 'text', constraints: 'NOT NULL' },
+          { name: 'action', type: 'text', constraints: 'NOT NULL' },
+          { name: 'created_at', type: 'timestamptz', constraints: 'NOT NULL', default: 'now()' },
+        ],
+        [
+          { id: 901, actor: 'system', action: 'scale_up', created_at: '2026-03-31 08:00' },
+          { id: 902, actor: 'admin', action: 'rotate_password', created_at: '2026-03-31 09:20' },
+        ],
+        [{ name: 'audit_logs_created_at_idx', type: 'btree', unique: false, columns: 'created_at DESC', size: '16 kB' }],
+      ),
+    ];
+  }
+
+  function buildDatabaseWorkspace(node, config) {
+    const databaseName = inferDatabaseName(node);
+    const primaryTables = postgresCatalogPreset(databaseName);
+    const analyticsTables = [
+      createWorkspaceTable(
+        'daily_metrics',
+        [
+          { name: 'day', type: 'date', constraints: 'PRIMARY KEY' },
+          { name: 'reads', type: 'integer', constraints: 'NOT NULL' },
+          { name: 'writes', type: 'integer', constraints: 'NOT NULL' },
+          { name: 'storage_gib', type: 'numeric(8,2)', constraints: 'NOT NULL' },
+        ],
+        [
+          { day: '2026-03-29', reads: 182340, writes: 23980, storage_gib: '18.2' },
+          { day: '2026-03-30', reads: 191008, writes: 25112, storage_gib: '18.4' },
+          { day: '2026-03-31', reads: 204993, writes: 26440, storage_gib: '18.6' },
+        ],
+        [{ name: 'daily_metrics_pkey', type: 'btree', unique: true, columns: 'day', size: '16 kB' }],
+      ),
+    ];
+
+    return {
+      engine: 'PostgreSQL',
+      version: config.version,
+      databases: [
+        {
+          id: `${databaseName}-primary`,
+          name: databaseName,
+          owner: `${databaseName}_app`,
+          size: '18.6 GiB',
+          tables: primaryTables,
+        },
+        {
+          id: `${databaseName}-analytics`,
+          name: `${databaseName}_analytics`,
+          owner: 'analytics',
+          size: '6.4 GiB',
+          tables: analyticsTables,
+        },
+      ],
+    };
+  }
+
+  function syncDatabaseNode(node) {
+    if (!node || node.type !== 'database') {
+      return node;
+    }
+
+    const flavor = node.databaseConfig && node.databaseConfig.flavor ? node.databaseConfig.flavor : databaseFlavorFromNode(node);
+    const nextConfig = {
+      ...createDatabaseConfig(flavor, { node }),
+      ...(node.databaseConfig || {}),
+    };
+
+    node.databaseConfig = nextConfig;
+    node.details = {
+      ...(node.details || {}),
+      backup: nextConfig.backupPolicy,
+      runtime: `${nextConfig.cpu} CPU / ${nextConfig.memory} RAM`,
+      version: nextConfig.version,
+      storage: nextConfig.storage,
+      replicas: `${nextConfig.replicas} 副本`,
+    };
+
+    node.subtitle = `${nextConfig.instanceSpec} / ${nextConfig.replicas} 副本 / ${nextConfig.cpu} CPU / ${nextConfig.memory}`;
+    node.tags = uniqueTags([nextConfig.instanceSpec, `${nextConfig.replicas} 副本`, `${nextConfig.cpu} CPU`, nextConfig.memory]);
+
+    if (supportsDatabaseWorkspace(node) && !node.databaseWorkspace) {
+      node.databaseWorkspace = buildDatabaseWorkspace(node, nextConfig);
+    }
+
+    if (node.databaseWorkspace) {
+      node.databaseWorkspace.engine = flavor;
+      node.databaseWorkspace.version = nextConfig.version;
+    }
+
+    return node;
+  }
+
+  function hydrateNode(node) {
+    if (node.type === 'database') {
+      return syncDatabaseNode(node);
+    }
+
+    return node;
+  }
+
+  function openDatabaseWorkspace(nodeId) {
+    const node = getNodeById(nodeId);
+    if (!supportsDatabaseWorkspace(node)) {
+      state.databaseView = null;
+      return;
+    }
+
+    syncDatabaseNode(node);
+    const current = state.databaseView && state.databaseView.nodeId === nodeId ? state.databaseView : null;
+    const databases = (node.databaseWorkspace && node.databaseWorkspace.databases) || [];
+    const selectedDatabaseId =
+      current && databases.some((database) => database.id === current.databaseId)
+        ? current.databaseId
+        : databases[0] && databases[0].id;
+    const selectedDatabase = databases.find((database) => database.id === selectedDatabaseId) || databases[0];
+    const tables = (selectedDatabase && selectedDatabase.tables) || [];
+    const selectedTableId =
+      current && tables.some((table) => table.id === current.tableId)
+        ? current.tableId
+        : '';
+
+    state.databaseView = {
+      nodeId,
+      databaseId: selectedDatabaseId || '',
+      tableId: selectedTableId || '',
+      tab: current ? current.tab : 'rows',
+      configDraft: current ? { ...current.configDraft } : { ...node.databaseConfig },
+      saveState: current ? current.saveState : 'idle',
+      error: current ? current.error : '',
+      importOpen: current ? current.importOpen : false,
+      importMethod: current ? current.importMethod : 'csv',
+      importDraft: current
+        ? { ...current.importDraft }
+        : {
+            csvName: `${selectedDatabase ? selectedDatabase.name : 'database'}.csv`,
+            dmpName: `${selectedDatabase ? selectedDatabase.name : 'database'}.dmp`,
+            sourceUrl: 'postgres://readonly@public.example.com:5432/source_db',
+          },
+      importStatus: current ? current.importStatus : 'idle',
+      importError: current ? current.importError : '',
+    };
+  }
+
+  function closeDatabaseWorkspace() {
+    state.databaseView = null;
+  }
+
+  function activeDatabaseContext() {
+    if (!state.databaseView || state.databaseView.nodeId !== state.selectedNodeId) {
+      return null;
+    }
+
+    const node = getNodeById(state.databaseView.nodeId);
+    if (!supportsDatabaseWorkspace(node) || !node.databaseWorkspace) {
+      return null;
+    }
+
+    const databases = node.databaseWorkspace.databases || [];
+    const database =
+      databases.find((item) => item.id === state.databaseView.databaseId) ||
+      databases[0];
+    const tables = (database && database.tables) || [];
+    const table =
+      tables.find((item) => item.id === state.databaseView.tableId) ||
+      null;
+
+    if (!database) {
+      return null;
+    }
+
+    return {
+      node,
+      workspace: node.databaseWorkspace,
+      database,
+      table,
+      view: state.databaseView,
+    };
+  }
+
+  function inferDatabaseRelations(database) {
+    const tables = database && Array.isArray(database.tables) ? database.tables : [];
+    const tableNames = tables.map((table) => table.name);
+
+    return tables.flatMap((table) =>
+      table.columns
+        .filter((column) => /_id$/i.test(column.name))
+        .map((column) => {
+          const base = column.name.replace(/_id$/i, '').toLowerCase();
+          const candidates = [
+            base,
+            `${base}s`,
+            `${base}es`,
+            base.endsWith('y') ? `${base.slice(0, -1)}ies` : '',
+          ].filter(Boolean);
+          const target = candidates.find((candidate) => tableNames.includes(candidate));
+
+          if (!target) {
+            return null;
+          }
+
+          return {
+            from: table.name,
+            to: target,
+            column: column.name,
+          };
+        })
+        .filter(Boolean),
+    );
+  }
+
+  function erLayoutForTables(tables) {
+    const presets = {
+      1: [{ x: 96, y: 92 }],
+      2: [
+        { x: 72, y: 92 },
+        { x: 380, y: 92 },
+      ],
+      3: [
+        { x: 56, y: 64 },
+        { x: 356, y: 64 },
+        { x: 208, y: 276 },
+      ],
+      4: [
+        { x: 40, y: 54 },
+        { x: 336, y: 54 },
+        { x: 40, y: 274 },
+        { x: 336, y: 274 },
+      ],
+    };
+
+    const positions = presets[tables.length];
+    if (positions) {
+      return positions;
+    }
+
+    return tables.map((_, index) => ({
+      x: 40 + (index % 2) * 296,
+      y: 54 + Math.floor(index / 2) * 220,
+    }));
+  }
+
+  function erBoundaryPoint(rect, target) {
+    const centerX = rect.x + rect.width / 2;
+    const centerY = rect.y + rect.height / 2;
+    const dx = target.x - centerX;
+    const dy = target.y - centerY;
+    const halfWidth = rect.width / 2;
+    const halfHeight = rect.height / 2;
+
+    if (dx === 0 && dy === 0) {
+      return { x: centerX, y: centerY };
+    }
+
+    if (Math.abs(dx) * halfHeight > Math.abs(dy) * halfWidth) {
+      return {
+        x: centerX + Math.sign(dx || 1) * halfWidth,
+        y: centerY + (dy * halfWidth) / Math.max(Math.abs(dx), 1),
+      };
+    }
+
+    return {
+      x: centerX + (dx * halfHeight) / Math.max(Math.abs(dy), 1),
+      y: centerY + Math.sign(dy || 1) * halfHeight,
+    };
+  }
+
+  function erConnectionGeometry(from, to) {
+    const fromCenter = {
+      x: from.x + from.width / 2,
+      y: from.y + from.height / 2,
+    };
+    const toCenter = {
+      x: to.x + to.width / 2,
+      y: to.y + to.height / 2,
+    };
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+    const start = erBoundaryPoint(from, toCenter);
+    const end = erBoundaryPoint(to, fromCenter);
+
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      const curve = Math.max(52, Math.abs(end.x - start.x) * 0.35);
+      const direction = end.x >= start.x ? 1 : -1;
+
+      return {
+        path: `M ${start.x} ${start.y} C ${start.x + curve * direction} ${start.y}, ${end.x - curve * direction} ${end.y}, ${end.x} ${end.y}`,
+        labelX: (start.x + end.x) / 2,
+        labelY: (start.y + end.y) / 2 - 10,
+      };
+    }
+
+    const curve = Math.max(52, Math.abs(end.y - start.y) * 0.35);
+    const direction = end.y >= start.y ? 1 : -1;
+
+    return {
+      path: `M ${start.x} ${start.y} C ${start.x} ${start.y + curve * direction}, ${end.x} ${end.y - curve * direction}, ${end.x} ${end.y}`,
+      labelX: (start.x + end.x) / 2 + 8,
+      labelY: (start.y + end.y) / 2 - 8,
+    };
+  }
+
+  function renderDatabaseErPanel(database) {
+    const tables = database.tables || [];
+    const layout = erLayoutForTables(tables);
+    const relations = inferDatabaseRelations(database);
+    const width = 640;
+    const height = Math.max(360, Math.max(...layout.map((item) => item.y), 0) + 188);
+    const cardWidth = 228;
+    const cardHeight = 132;
+    const positionMap = Object.fromEntries(
+      tables.map((table, index) => [table.name, { ...layout[index], width: cardWidth, height: cardHeight }]),
+    );
+
+    return `
+      <div class="db-panel db-er-panel">
+        <div class="db-er-stage" style="height:${height}px;">
+          <svg class="db-er-layer" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+            ${relations
+              .map((relation) => {
+                const from = positionMap[relation.from];
+                const to = positionMap[relation.to];
+                if (!from || !to) {
+                  return '';
+                }
+                const geometry = erConnectionGeometry(from, to);
+
+                return `
+                  <path class="db-er-path" d="${geometry.path}"></path>
+                  <text class="db-er-label" x="${geometry.labelX}" y="${geometry.labelY}" text-anchor="middle">${escapeHtml(relation.column)}</text>
+                `;
+              })
+              .join('')}
+          </svg>
+
+          ${tables
+            .map((table, index) => {
+              const position = layout[index];
+              return `
+                <div class="db-er-card" style="left:${position.x}px; top:${position.y}px;">
+                  <div class="db-er-card-head">
+                    <span class="material-symbols-outlined db-entity-icon">table_rows</span>
+                    <strong>${escapeHtml(table.name)}</strong>
+                  </div>
+                  <div class="db-er-columns">
+                    ${table.columns
+                      .slice(0, 4)
+                      .map(
+                        (column) => `
+                          <div class="db-er-column">
+                            <span>${escapeHtml(column.name)}</span>
+                            <em>${escapeHtml(column.type)}</em>
+                          </div>
+                        `,
+                      )
+                      .join('')}
+                    ${
+                      table.columns.length > 4
+                        ? `<div class="db-er-more">+ ${table.columns.length - 4} columns</div>`
+                        : ''
+                    }
+                  </div>
+                </div>
+              `;
+            })
+            .join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDatabaseImportPanel(database, view) {
+    const method = ['csv', 'dmp', 'url'].includes(view.importMethod) ? view.importMethod : 'csv';
+    const draft = view.importDraft || {};
+    const statusClass = view.importError ? 'error' : view.importStatus === 'done' ? 'saved' : view.importStatus === 'running' ? 'pending' : '';
+    const statusText = view.importError
+      ? view.importError
+      : view.importStatus === 'done'
+      ? '导入任务已提交'
+      : view.importStatus === 'running'
+      ? '正在准备导入任务'
+      : `导入目标：${database.name}`;
+
+    return `
+      <div class="db-import-panel">
+        <div class="db-import-head">
+          <strong>导入数据</strong>
+          <span>CSV / DMP / 公开数据库地址</span>
+        </div>
+
+        <div class="db-import-methods">
+          <button
+            type="button"
+            class="db-import-method ${method === 'csv' ? 'active' : ''}"
+            data-db-action="set-import-method"
+            data-import-method="csv"
+          >
+            CSV
+          </button>
+          <button
+            type="button"
+            class="db-import-method ${method === 'dmp' ? 'active' : ''}"
+            data-db-action="set-import-method"
+            data-import-method="dmp"
+          >
+            DMP
+          </button>
+          <button
+            type="button"
+            class="db-import-method ${method === 'url' ? 'active' : ''}"
+            data-db-action="set-import-method"
+            data-import-method="url"
+          >
+            公开地址
+          </button>
+        </div>
+
+        <div class="db-import-grid">
+          ${
+            method === 'csv'
+              ? `<label class="db-config-label">
+                  <span>CSV 文件</span>
+                  <input
+                    class="agui-input"
+                    type="text"
+                    value="${escapeHtml(draft.csvName || '')}"
+                    placeholder="orders_export.csv"
+                    data-db-import-field="csvName"
+                  />
+                </label>`
+              : method === 'dmp'
+              ? `<label class="db-config-label">
+                  <span>DMP 文件</span>
+                  <input
+                    class="agui-input"
+                    type="text"
+                    value="${escapeHtml(draft.dmpName || '')}"
+                    placeholder="orders_snapshot.dmp"
+                    data-db-import-field="dmpName"
+                  />
+                </label>`
+              : `<label class="db-config-label">
+                  <span>公开数据库地址</span>
+                  <input
+                    class="agui-input"
+                    type="text"
+                    value="${escapeHtml(draft.sourceUrl || '')}"
+                    placeholder="postgres://readonly@public.example.com:5432/source_db"
+                    data-db-import-field="sourceUrl"
+                  />
+                </label>`
+          }
+        </div>
+
+        <div class="db-import-footer">
+          <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+          <button type="button" class="db-primary-button" data-db-action="execute-import">
+            开始导入
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  function databaseConfigChanged(node, draft) {
+    const fields = ['instanceSpec', 'cpu', 'memory', 'replicas', 'storage', 'backupPolicy'];
+    return fields.some((field) => String((node.databaseConfig || {})[field]) !== String((draft || {})[field]));
+  }
+
+  function saveDatabaseConfig() {
+    const context = activeDatabaseContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, view } = context;
+    const draft = view.configDraft || {};
+
+    if (!draft.instanceSpec || !draft.cpu || !draft.memory || !draft.replicas) {
+      state.databaseView.error = '请先补全数据库规格、CPU、内存和副本数。';
+      renderSidebarContext();
+      return;
+    }
+
+    node.databaseConfig = {
+      ...node.databaseConfig,
+      ...draft,
+    };
+    syncDatabaseNode(node);
+    state.databaseView.configDraft = { ...node.databaseConfig };
+    state.databaseView.saveState = 'done';
+    state.databaseView.error = '';
+
+    addMessage(
+      'assistant',
+      `数据库配置已更新：${node.title} 调整为 ${node.databaseConfig.instanceSpec}，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，${node.databaseConfig.replicas} 副本。`,
+    );
+    renderAll();
+  }
+
+  function executeDatabaseImport() {
+    const context = activeDatabaseContext();
+    if (!context) {
+      return;
+    }
+
+    const { database, view } = context;
+    const method = ['csv', 'dmp', 'url'].includes(view.importMethod) ? view.importMethod : 'csv';
+    const draft = view.importDraft || {};
+    const csvName = String(draft.csvName || '').trim();
+    const dmpName = String(draft.dmpName || '').trim();
+    const sourceUrl = String(draft.sourceUrl || '').trim();
+
+    if (method === 'csv' && !csvName) {
+      state.databaseView.importStatus = 'idle';
+      state.databaseView.importError = '请填写 CSV 文件名。';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    if (method === 'dmp' && !dmpName) {
+      state.databaseView.importStatus = 'idle';
+      state.databaseView.importError = '请填写 DMP 文件名。';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    if (method === 'url' && !sourceUrl) {
+      state.databaseView.importStatus = 'idle';
+      state.databaseView.importError = '请填写公开数据库地址。';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    const sourceLabel =
+      method === 'csv'
+        ? `CSV 文件 ${csvName}`
+        : method === 'dmp'
+        ? `DMP 文件 ${dmpName}`
+        : `公开数据库 ${sourceUrl}`;
+
+    state.databaseView.importStatus = 'done';
+    state.databaseView.importError = '';
+    addMessage('assistant', `已为 ${database.name} 创建导入任务，来源：${sourceLabel}。`);
+    renderAll();
   }
 
   function getInitialGraph() {
@@ -303,13 +1181,14 @@
 
   function resetState() {
     const initial = getInitialGraph();
-    state.nodes = initial.nodes;
+    state.nodes = initial.nodes.map((node) => hydrateNode(node));
     state.edges = initial.edges;
     state.messages = initial.messages;
     state.timeline = initial.timeline;
     state.selectedNodeId = initial.selectedNodeId;
     state.agentBusy = false;
     state.currentTask = '待命';
+    state.databaseView = null;
     state.lastIssue = {
       title: 'FastGPT 启动失败',
       reason: '后端实例缺少 `OPENAI_API_KEY`，入口健康检查连续失败。',
@@ -426,6 +1305,11 @@
 
       card.addEventListener('click', () => {
         state.selectedNodeId = node.id;
+        if (supportsDatabaseWorkspace(node)) {
+          openDatabaseWorkspace(node.id);
+        } else {
+          closeDatabaseWorkspace();
+        }
         renderAll();
       });
 
@@ -482,6 +1366,343 @@
     });
     scheduleEdgeRender();
     updateSummary();
+  }
+
+  function renderCanvasWorkspace() {
+    if (!dom.canvasWorkspace || !dom.canvasStage) {
+      return;
+    }
+
+    const context = activeDatabaseContext();
+    dom.canvasStage.classList.toggle('workspace-mode', Boolean(context));
+
+    if (!context) {
+      dom.canvasWorkspace.hidden = true;
+      dom.canvasWorkspace.className = 'canvas-workspace';
+      dom.canvasWorkspace.innerHTML = '';
+      return;
+    }
+
+    const { node, workspace, database, table, view } = context;
+    const activeTab = ['rows', 'schema', 'indexes'].includes(view.tab) ? view.tab : 'rows';
+    const tableContent = table
+      ? activeTab === 'schema'
+        ? renderDatabaseSchemaPanel(table)
+        : activeTab === 'indexes'
+        ? renderDatabaseIndexesPanel(table)
+        : renderDatabaseRowsPanel(table)
+      : renderDatabaseErPanel(database);
+
+    dom.canvasWorkspace.hidden = false;
+    dom.canvasWorkspace.className = 'canvas-workspace active';
+    dom.canvasWorkspace.innerHTML = `
+      <div class="db-workspace-header">
+        <div class="db-workspace-copy">
+          <h2 class="db-workspace-title">${escapeHtml(node.title)}</h2>
+        </div>
+        <div class="db-workspace-actions">
+          <button type="button" class="db-ghost-button" data-db-action="toggle-import">
+            ${view.importOpen ? '收起导入' : '导入数据'}
+          </button>
+          <button type="button" class="db-ghost-button" data-db-action="close-workspace">返回画布</button>
+        </div>
+      </div>
+
+      <div class="db-workspace-body">
+        <aside class="db-nav">
+          <div class="db-nav-label">Databases</div>
+          <div class="db-database-list">
+            ${workspace.databases
+              .map(
+                (item) => `
+                  <div class="db-database-group">
+                    <button
+                      type="button"
+                      class="db-database-button ${item.id === database.id ? 'active' : ''}"
+                      data-db-action="select-database"
+                      data-database-id="${item.id}"
+                    >
+                      <strong class="db-entity-label">
+                        <span class="material-symbols-outlined db-entity-icon">database</span>
+                        <span>${escapeHtml(item.name)}</span>
+                      </strong>
+                    </button>
+                    ${
+                      item.id === database.id
+                        ? `<div class="db-table-list">
+                            ${item.tables
+                              .map(
+                                (entry) => `
+                                  <button
+                                    type="button"
+                                    class="db-table-button ${table && entry.id === table.id ? 'active' : ''}"
+                                    data-db-action="select-table"
+                                    data-table-id="${entry.id}"
+                                  >
+                                    <strong class="db-entity-label">
+                                      <span class="material-symbols-outlined db-entity-icon">table_rows</span>
+                                      <span>${escapeHtml(entry.name)}</span>
+                                    </strong>
+                                  </button>
+                                `,
+                              )
+                              .join('')}
+                          </div>`
+                        : ''
+                    }
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+        </aside>
+
+        <section class="db-main">
+          ${view.importOpen ? renderDatabaseImportPanel(database, view) : ''}
+          <div class="db-main-header">
+            <div>
+              <h3 class="db-main-title">
+                <span class="material-symbols-outlined db-entity-icon">${table ? 'table_rows' : 'account_tree'}</span>
+                <span>${escapeHtml(table ? table.name : database.name)}</span>
+              </h3>
+            </div>
+          </div>
+
+          ${
+            table
+              ? `<div class="db-tabs">
+                  <button
+                    type="button"
+                    class="db-tab-button ${activeTab === 'rows' ? 'active' : ''}"
+                    data-db-action="select-tab"
+                    data-tab="rows"
+                  >
+                    Rows
+                  </button>
+                  <button
+                    type="button"
+                    class="db-tab-button ${activeTab === 'schema' ? 'active' : ''}"
+                    data-db-action="select-tab"
+                    data-tab="schema"
+                  >
+                    Schema
+                  </button>
+                  <button
+                    type="button"
+                    class="db-tab-button ${activeTab === 'indexes' ? 'active' : ''}"
+                    data-db-action="select-tab"
+                    data-tab="indexes"
+                  >
+                    Indexes
+                  </button>
+                </div>`
+              : ''
+          }
+
+          ${tableContent}
+        </section>
+      </div>
+    `;
+  }
+
+  function renderDatabaseRowsPanel(table) {
+    return `
+      <div class="db-panel">
+        <div class="db-panel-inner">
+          <table class="db-data-table">
+            <thead>
+              <tr>
+                ${table.columns.map((column) => `<th>${escapeHtml(column.name)}</th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${table.rows
+                .map(
+                  (row) => `
+                    <tr>
+                      ${table.columns
+                        .map((column) => `<td>${escapeHtml(formatDatabaseCell(row[column.name]))}</td>`)
+                        .join('')}
+                    </tr>
+                  `,
+                )
+                .join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDatabaseSchemaPanel(table) {
+    return `
+      <div class="db-panel">
+        <div class="db-panel-inner">
+          <table class="db-schema-table">
+            <thead>
+              <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Constraints</th>
+                <th>Default</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${table.columns
+                .map(
+                  (column) => `
+                    <tr>
+                      <td>${escapeHtml(column.name)}</td>
+                      <td>${escapeHtml(column.type)}</td>
+                      <td>${escapeHtml(column.constraints || '-')}</td>
+                      <td>${escapeHtml(column.default || '-')}</td>
+                    </tr>
+                  `,
+                )
+                .join('')}
+            </tbody>
+          </table>
+          <div class="db-sql-block">
+            <pre>${escapeHtml(table.ddl)}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDatabaseIndexesPanel(table) {
+    return `
+      <div class="db-panel">
+        <div class="db-index-list">
+          ${table.indexes.length
+            ? table.indexes
+                .map(
+                  (index) => `
+                    <div class="db-index-row">
+                      <strong>${escapeHtml(index.name)}</strong>
+                      <span>${escapeHtml(index.type)} / ${index.unique ? 'unique' : 'non-unique'}</span>
+                      <span>${escapeHtml(index.columns)} / ${escapeHtml(index.size)}</span>
+                    </div>
+                  `,
+                )
+                .join('')
+            : '<div class="db-empty-state">当前表没有额外索引。</div>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSidebarContext() {
+    if (!dom.chatTitle || !dom.chatContext || !dom.chatInput) {
+      return;
+    }
+
+    const context = activeDatabaseContext();
+
+    if (!context) {
+      dom.chatTitle.textContent = '聊天';
+      dom.chatContext.hidden = true;
+      dom.chatContext.className = 'chat-context';
+      dom.chatContext.innerHTML = '';
+      dom.chatInput.placeholder = DEFAULT_CHAT_PLACEHOLDER;
+      return;
+    }
+
+    const { node, database, view } = context;
+    const draft = view.configDraft || { ...node.databaseConfig };
+    const changed = databaseConfigChanged(node, draft);
+    const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
+    const statusText = view.error
+      ? view.error
+      : changed
+      ? '配置有未保存修改'
+      : view.saveState === 'done'
+      ? '配置已同步到数据库工作区'
+      : '当前配置已生效';
+
+    dom.chatTitle.textContent = '数据库配置';
+    dom.chatContext.hidden = false;
+    dom.chatContext.className = 'chat-context active';
+    dom.chatInput.placeholder = '继续询问数据库操作、表结构调整，或让 Agent 生成 SQL';
+    dom.chatContext.innerHTML = `
+      <div class="db-config-card">
+        <div class="db-config-header">
+          <div>
+            <strong>${escapeHtml(node.title)}</strong>
+            <span>${escapeHtml(database.name)} / ${escapeHtml(node.databaseConfig.flavor)} ${escapeHtml(node.databaseConfig.version)}</span>
+          </div>
+          <div class="db-chip">${escapeHtml(node.databaseConfig.instanceSpec)}</div>
+        </div>
+
+        <section class="db-config-section">
+          <div class="db-config-copy">扩缩容与数据库规格。</div>
+          <div class="db-config-grid">
+            <label class="db-config-label">
+              <span>Instance</span>
+              <select class="agui-select" data-db-config-field="instanceSpec">
+                ${selectOptions(databaseSpecOptions(node.databaseConfig.flavor), draft.instanceSpec || node.databaseConfig.instanceSpec)}
+              </select>
+            </label>
+            <label class="db-config-label">
+              <span>Replicas</span>
+              <select class="agui-select" data-db-config-field="replicas">
+                ${selectOptions(['1', '2', '3', '5'], String(draft.replicas || node.databaseConfig.replicas))}
+              </select>
+            </label>
+            <label class="db-config-label">
+              <span>CPU</span>
+              <select class="agui-select" data-db-config-field="cpu">
+                ${selectOptions(['1', '2', '4', '8', '16'], String(draft.cpu || node.databaseConfig.cpu))}
+              </select>
+            </label>
+            <label class="db-config-label">
+              <span>Memory</span>
+              <select class="agui-select" data-db-config-field="memory">
+                ${selectOptions(['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'], String(draft.memory || node.databaseConfig.memory))}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <section class="db-config-section">
+          <div class="db-config-copy">存储与备份策略。</div>
+          <div class="db-config-grid">
+            <label class="db-config-label">
+              <span>Storage</span>
+              <input
+                class="agui-input"
+                type="text"
+                value="${escapeHtml(String(draft.storage || node.databaseConfig.storage))}"
+                data-db-config-field="storage"
+              />
+            </label>
+            <label class="db-config-label">
+              <span>Backup</span>
+              <select class="agui-select" data-db-config-field="backupPolicy">
+                ${selectOptions(['PITR / Hourly', 'Snapshot / 6h', 'Daily Snapshot'], String(draft.backupPolicy || node.databaseConfig.backupPolicy))}
+              </select>
+            </label>
+          </div>
+        </section>
+
+        <div class="db-config-footer">
+          <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+          <button type="button" class="db-primary-button" data-db-config-action="save">保存配置</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function formatDatabaseCell(value) {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+
+    if (typeof value === 'object') {
+      return JSON.stringify(value);
+    }
+
+    return String(value);
   }
 
   function renderEdges() {
@@ -666,6 +1887,8 @@
   function renderAll() {
     renderNav();
     renderCanvas();
+    renderCanvasWorkspace();
+    renderSidebarContext();
     renderChat();
     setAgentState(state.agentBusy, state.currentTask);
   }
@@ -681,6 +1904,7 @@
         const firstProject = collectProjectNodes()[0] || state.nodes[0];
         if (firstProject) {
           state.selectedNodeId = firstProject.id;
+          closeDatabaseWorkspace();
           renderAll();
         }
         return;
@@ -825,6 +2049,105 @@
         void deployDatabaseFromAgui(message.id);
       }
     });
+
+    if (dom.canvasWorkspace) {
+      dom.canvasWorkspace.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-db-action]');
+        if (!button || !state.databaseView) {
+          return;
+        }
+
+        if (button.dataset.dbAction === 'close-workspace') {
+          closeDatabaseWorkspace();
+          renderAll();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'select-database') {
+          state.databaseView.databaseId = button.dataset.databaseId || '';
+          state.databaseView.tableId = '';
+          state.databaseView.tab = 'rows';
+          renderAll();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'select-table') {
+          state.databaseView.tableId = button.dataset.tableId || '';
+          renderAll();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'select-tab') {
+          state.databaseView.tab = button.dataset.tab || 'rows';
+          renderAll();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'toggle-import') {
+          state.databaseView.importOpen = !state.databaseView.importOpen;
+          state.databaseView.importError = '';
+          renderCanvasWorkspace();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'set-import-method') {
+          state.databaseView.importMethod = button.dataset.importMethod || 'csv';
+          state.databaseView.importStatus = 'idle';
+          state.databaseView.importError = '';
+          renderCanvasWorkspace();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'execute-import') {
+          executeDatabaseImport();
+        }
+      });
+
+      dom.canvasWorkspace.addEventListener('input', (event) => {
+        const input = event.target.closest('[data-db-import-field]');
+        if (!input || !state.databaseView) {
+          return;
+        }
+
+        state.databaseView.importDraft[input.dataset.dbImportField] = input.value;
+        state.databaseView.importStatus = 'idle';
+        state.databaseView.importError = '';
+      });
+    }
+
+    if (dom.chatContext) {
+      const updateConfigDraft = (event) => {
+        const input = event.target.closest('[data-db-config-field]');
+        if (!input || !state.databaseView) {
+          return;
+        }
+
+        state.databaseView.configDraft[input.dataset.dbConfigField] = input.value;
+        state.databaseView.saveState = 'editing';
+        state.databaseView.error = '';
+
+        if (input.dataset.dbConfigField === 'instanceSpec') {
+          const profile = databaseSpecProfile(input.value);
+          state.databaseView.configDraft.cpu = profile.cpu;
+          state.databaseView.configDraft.memory = profile.memory;
+        }
+
+        renderSidebarContext();
+      };
+
+      dom.chatContext.addEventListener('input', updateConfigDraft);
+      dom.chatContext.addEventListener('change', updateConfigDraft);
+      dom.chatContext.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-db-config-action]');
+        if (!button || !state.databaseView) {
+          return;
+        }
+
+        if (button.dataset.dbConfigAction === 'save') {
+          saveDatabaseConfig();
+        }
+      });
+    }
 
     dom.chatForm.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -1113,7 +2436,7 @@
     pushTimeline('创建数据库', `${flavor} 集群初始化、实例规格下发和副本编排。`, 'running');
     await wait(1000);
 
-    state.nodes.push({
+    const databaseNode = syncDatabaseNode({
       id,
       type: 'database',
       title: `${flavor} Cluster`,
@@ -1128,7 +2451,12 @@
         observability: `${instanceSpec} / ${replicas} 副本 / 监控开启`,
       },
       operations: ['复制连接串', '创建只读副本', '打开备份'],
+      databaseConfig: createDatabaseConfig(flavor, {
+        instanceSpec,
+        replicas,
+      }),
     });
+    state.nodes.push(databaseNode);
 
     const lastContainer = [...state.nodes].reverse().find((node) => node.type === 'container');
     if (lastContainer) {
@@ -1165,6 +2493,23 @@
     const backId = createId('container');
     const dbId = createId('db');
     const entryId = createId('entry');
+
+    const appDatabaseNode = syncDatabaseNode({
+      id: dbId,
+      type: 'database',
+      title: `${appName} Data`,
+      subtitle: appTemplate.databaseSubtitle,
+      status: 'Protected',
+      tags: appTemplate.databaseTags,
+      x: baseX + 545,
+      y: baseY + 136,
+      details: {
+        connect: appTemplate.databaseConnect,
+        backup: appTemplate.databaseBackup,
+        ops: appTemplate.databaseOps,
+      },
+      operations: ['查看连接串', '创建备份', '扩容存储'],
+    });
 
     state.nodes.push(
       {
@@ -1215,22 +2560,7 @@
         },
         operations: ['查看日志', '更改密钥', '重启'],
       },
-      {
-        id: dbId,
-        type: 'database',
-        title: `${appName} Data`,
-        subtitle: appTemplate.databaseSubtitle,
-        status: 'Protected',
-        tags: appTemplate.databaseTags,
-        x: baseX + 545,
-        y: baseY + 136,
-        details: {
-          connect: appTemplate.databaseConnect,
-          backup: appTemplate.databaseBackup,
-          ops: appTemplate.databaseOps,
-        },
-        operations: ['查看连接串', '创建备份', '扩容存储'],
-      },
+      appDatabaseNode,
     );
 
     state.edges.push(
@@ -1616,6 +2946,8 @@
       ops: '运维',
       client: '连接客户端',
       version: '版本',
+      storage: '存储',
+      replicas: '副本',
       scaling: '伸缩',
     }[key] || key;
   }
@@ -2750,7 +4082,7 @@
   }
 
   function escapeHtml(text) {
-    return text
+    return String(text ?? '')
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
