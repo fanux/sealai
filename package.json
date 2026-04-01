@@ -1,0 +1,9 @@
+{
+  "name": "sealai",
+  "version": "1.1.2",
+  "private": true,
+  "description": "SealAI prototype workspace for Sealos.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

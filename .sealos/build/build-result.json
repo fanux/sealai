@@ -1,0 +1,13 @@
+{
+  "outcome": "failed",
+  "registry": "ghcr",
+  "build": {
+    "image_name": "sealai",
+    "started_at": "2026-04-01T06:42:45.629Z"
+  },
+  "push": {
+    "remote_image": "ghcr.io/fanux/sealai:20260401-144245"
+  },
+  "error": "#1 [internal] load build definition from Dockerfile\n#1 transferring dockerfile: 300B done\n#1 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/sha256:e09303eac750e663bf665b7ada2b1f0800a0872a07db309ef3ca00ac2ab1e75d\n#2 ...\n\n#3 [auth] library/sha256:pull token for registry-1.docker.io\n#3 DONE 0.0s\n\n#2 [internal] load metadata for docker.io/library/sha256:e09303eac750e663bf665b7ada2b1f0800a0872a07db309ef3ca00ac2ab1e75d\n#2 ERROR: failed to authorize: failed to fetch oauth token: Post \"https://auth.docker.io/token\": dial tcp 104.244.46.71:443: i/o timeout\n------\n > [internal] load metadata for docker.io/library/sha256:e09303eac750e663bf665b7ada2b1f0800a0872a07db309ef3ca00ac2ab1e75d:\n------\nDockerfile:1\n--------------------\n   1 | >>> FROM sha256:e09303eac750e663bf665b7ada2b1f0800a0872a07db309ef3ca00ac2ab1e75d\n   2 |     \n   3 |     WORKDIR /app\n--------------------\nerror: failed to solve: failed to fetch oauth token: Post \"https://auth.docker.io/token\": dial tcp 104.244.46.71:443: i/o timeout\n",
+  "finished_at": "2026-04-01T06:43:17.365Z"
+}

@@ -119,6 +119,18 @@
       versions: ['stable', '1.78', 'nightly'],
     },
     {
+      id: 'cpp',
+      name: 'C++',
+      mark: 'C++',
+      icon: 'cpp',
+      accent: '#6fa8ff',
+      type: 'Language',
+      description: 'CMake / GDB',
+      toolchain: 'C++ / Clang / GCC / CMake / GDB',
+      defaultPort: '8080',
+      versions: ['23', '20', '17'],
+    },
+    {
       id: 'nextjs',
       name: 'Next.js',
       mark: 'Nx',
@@ -164,6 +176,37 @@
     },
   ];
 
+  const DEVBOX_IDE_CLIENTS = [
+    {
+      id: 'vscode',
+      name: 'VS Code',
+      mark: 'VS',
+      accent: '#3ea6ff',
+      note: 'Remote SSH',
+    },
+    {
+      id: 'cursor',
+      name: 'Cursor',
+      mark: 'Cu',
+      accent: '#7b89ff',
+      note: 'Remote SSH',
+    },
+    {
+      id: 'windsurf',
+      name: 'Windsurf',
+      mark: 'Ws',
+      accent: '#63d8ff',
+      note: 'Remote SSH',
+    },
+    {
+      id: 'jetbrains',
+      name: 'JetBrains',
+      mark: 'JB',
+      accent: '#ff7ad9',
+      note: 'Gateway',
+    },
+  ];
+
   const dom = {
     navFilters: document.getElementById('navFilters'),
     nodeLayer: document.getElementById('nodeLayer'),
@@ -172,6 +215,7 @@
     canvasWorld: document.getElementById('canvasWorld'),
     canvasWorkspace: document.getElementById('canvasWorkspace'),
     chatTitle: document.getElementById('chatTitle'),
+    chatScroll: document.getElementById('chatScroll'),
     chatContext: document.getElementById('chatContext'),
     chatLog: document.getElementById('chatLog'),
     chatForm: document.getElementById('chatForm'),
@@ -194,6 +238,10 @@
     currentTask: '待命',
     lastIssue: null,
     databaseView: null,
+    entryView: null,
+    containerView: null,
+    devboxView: null,
+    suppressClickNodeId: null,
   };
 
   let rafHandle = 0;
@@ -212,6 +260,409 @@
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '_')
       .replace(/^_+|_+$/g, '') || 'workspace';
+  }
+
+  function normalizeStringList(value) {
+    const items = Array.isArray(value) ? value : String(value || '').split(/[\n,]/);
+
+    return [...new Set(items.map((item) => String(item || '').trim()).filter(Boolean))];
+  }
+
+  function entryToken(text) {
+    return slugifyText(text).replace(/_/g, '-');
+  }
+
+  function defaultEntryWhitelist() {
+    return ['203.0.113.24', '198.51.100.18', '192.0.2.44/32'];
+  }
+
+  function normalizeEntryHealth(value) {
+    return String(value || '').toLowerCase() === 'issue' ? 'issue' : 'healthy';
+  }
+
+  function createEntryConfig(options = {}) {
+    const externalDomain = String(options.externalDomain || options.domain || '').trim();
+    const target = String(options.target || '').trim() || externalDomain || 'Workspace Entry';
+
+    return {
+      target,
+      externalDomain,
+      internalDomain: String(options.internalDomain || `${entryToken(target)}.region.internal`).trim(),
+      cnameHost: String(options.cnameHost || externalDomain).trim(),
+      cnameTarget: String(options.cnameTarget || 'gateway.sealos.run').trim(),
+      whitelist: normalizeStringList(options.whitelist || defaultEntryWhitelist()),
+      externalStatus: normalizeEntryHealth(options.externalStatus),
+      internalStatus: normalizeEntryHealth(options.internalStatus),
+    };
+  }
+
+  function syncEntryNode(node) {
+    if (!node || node.type !== 'entry') {
+      return node;
+    }
+
+    const details = node.details || {};
+    const config = createEntryConfig({
+      target: (node.entryConfig && node.entryConfig.target) || details.target || node.title,
+      externalDomain:
+        (node.entryConfig && node.entryConfig.externalDomain) || details.externalDomain || details.domain || node.title,
+      internalDomain: (node.entryConfig && node.entryConfig.internalDomain) || details.internalDomain,
+      cnameHost: (node.entryConfig && node.entryConfig.cnameHost) || details.cnameHost,
+      cnameTarget: (node.entryConfig && node.entryConfig.cnameTarget) || details.cnameTarget,
+      whitelist: (node.entryConfig && node.entryConfig.whitelist) || details.whitelist,
+      externalStatus: (node.entryConfig && node.entryConfig.externalStatus) || details.externalStatus,
+      internalStatus: (node.entryConfig && node.entryConfig.internalStatus) || details.internalStatus,
+    });
+
+    node.status = 'Accessible';
+    node.subtitle = '';
+    node.tags = [];
+    node.entryConfig = config;
+    node.details = {
+      ...details,
+      target: config.target,
+      domain: config.externalDomain,
+      externalDomain: config.externalDomain,
+      internalDomain: config.internalDomain,
+      cnameHost: config.cnameHost,
+      cnameTarget: config.cnameTarget,
+      whitelist: [...config.whitelist],
+      externalStatus: config.externalStatus,
+      internalStatus: config.internalStatus,
+    };
+
+    return node;
+  }
+
+  function trimNumeric(value, digits = 1) {
+    return String(Number(Number(value || 0).toFixed(digits)));
+  }
+
+  function parseMemoryValue(value) {
+    const match = String(value || '').trim().match(/^(\d+(?:\.\d+)?)(Mi|Gi)$/i);
+    if (!match) {
+      return null;
+    }
+
+    return {
+      amount: Number(match[1]),
+      unit: match[2],
+    };
+  }
+
+  function parseCpuValue(value) {
+    const amount = Number(String(value || '').trim());
+    return Number.isFinite(amount) ? amount : 0;
+  }
+
+  function parseCapacityValue(value) {
+    const match = String(value || '').trim().match(/^(\d+(?:\.\d+)?)(Mi|Gi|Ti)$/i);
+    if (!match) {
+      return null;
+    }
+
+    const amount = Number(match[1]);
+    const unit = match[2];
+    const factor =
+      {
+        Mi: 1,
+        Gi: 1024,
+        Ti: 1024 * 1024,
+      }[unit] || 1;
+
+    return {
+      amount,
+      unit,
+      baseMi: amount * factor,
+    };
+  }
+
+  function resourceUsagePercent(used, total, kind = 'capacity') {
+    const totalAmount = kind === 'cpu' ? parseCpuValue(total) : (parseCapacityValue(total) || {}).baseMi;
+    const usedAmount = kind === 'cpu' ? parseCpuValue(used) : (parseCapacityValue(used) || {}).baseMi;
+
+    if (!Number.isFinite(totalAmount) || !Number.isFinite(usedAmount) || totalAmount <= 0) {
+      return 0;
+    }
+
+    return Math.max(0, Math.min(100, Math.round((usedAmount / totalAmount) * 100)));
+  }
+
+  function estimateUsedCpu(cpu) {
+    const amount = Number(String(cpu || '1').trim());
+    if (!Number.isFinite(amount) || amount <= 0) {
+      return '0.4';
+    }
+
+    return trimNumeric(Math.max(0.2, amount * 0.42), amount < 1 ? 2 : 1);
+  }
+
+  function estimateUsedMemory(memory) {
+    const parsed = parseMemoryValue(memory);
+    if (!parsed) {
+      return '420Mi';
+    }
+
+    if (parsed.unit.toLowerCase() === 'gi') {
+      return `${trimNumeric(Math.max(0.5, parsed.amount * 0.46))}Gi`;
+    }
+
+    return `${Math.max(128, Math.round(parsed.amount * 0.46))}Mi`;
+  }
+
+  function estimateUsedDisk(diskSize) {
+    const parsed = parseCapacityValue(diskSize);
+    if (!parsed) {
+      return '8Gi';
+    }
+
+    if (parsed.unit.toLowerCase() === 'ti') {
+      return `${trimNumeric(Math.max(0.2, parsed.amount * 0.38))}Ti`;
+    }
+
+    if (parsed.unit.toLowerCase() === 'gi') {
+      return `${trimNumeric(Math.max(2, parsed.amount * 0.38))}Gi`;
+    }
+
+    return `${Math.max(512, Math.round(parsed.amount * 0.38))}Mi`;
+  }
+
+  function inferContainerReplicas(node, fallback) {
+    const text = [node && node.subtitle, ...(node && node.tags ? node.tags : [])].join(' ');
+    const match = String(text).match(/(\d+)\s*副本/);
+    return match ? match[1] : String(fallback || '1');
+  }
+
+  function createContainerConfig(options = {}) {
+    const cpu = String(options.cpu || '1').trim();
+    const memory = String(options.memory || '1Gi').trim();
+    const stateful =
+      typeof options.stateful === 'boolean' ? options.stateful : Boolean(options.mountDisk);
+
+    return {
+      image: String(options.image || 'registry.local/container:latest').trim(),
+      replicas: String(options.replicas || '1').trim(),
+      cpu,
+      memory,
+      quotaCpu: String(options.quotaCpu || cpu).trim(),
+      quotaMemory: String(options.quotaMemory || memory).trim(),
+      usedCpu: String(options.usedCpu || estimateUsedCpu(options.quotaCpu || cpu)).trim(),
+      usedMemory: String(options.usedMemory || estimateUsedMemory(options.quotaMemory || memory)).trim(),
+      envVars: String(options.envVars || '').trim(),
+      startArgs: String(options.startArgs || '').trim(),
+      stateful,
+      mountDisk: stateful,
+      diskSize: String(options.diskSize || (stateful ? '20Gi' : '')).trim(),
+      diskUsed: String(options.diskUsed || (stateful ? estimateUsedDisk(options.diskSize || '20Gi') : '')).trim(),
+      mountPath: String(options.mountPath || (stateful ? '/data' : '')).trim(),
+    };
+  }
+
+  function syncContainerNode(node) {
+    if (!node || node.type !== 'container') {
+      return node;
+    }
+
+    const details = node.details || {};
+    const nextConfig = {
+      ...createContainerConfig({
+        image: details.image,
+        replicas: inferContainerReplicas(node, '1'),
+        cpu: details.cpu || '1',
+        memory: details.memory || '1Gi',
+        quotaCpu: details.quotaCpu || details.cpu,
+        quotaMemory: details.quotaMemory || details.memory,
+        usedCpu: details.usedCpu,
+        usedMemory: details.usedMemory,
+        envVars: details.envVars,
+        startArgs: details.entrypoint || details.startArgs,
+        stateful: details.stateful,
+        mountDisk: details.mountDisk,
+        diskSize: details.diskSize,
+        diskUsed: details.diskUsed,
+        mountPath: details.mountPath,
+      }),
+      ...(node.containerConfig || {}),
+    };
+
+    nextConfig.stateful =
+      typeof nextConfig.stateful === 'boolean' ? nextConfig.stateful : Boolean(nextConfig.mountDisk);
+    nextConfig.mountDisk = Boolean(nextConfig.stateful || nextConfig.mountDisk);
+    if (!nextConfig.quotaCpu) {
+      nextConfig.quotaCpu = nextConfig.cpu;
+    }
+    if (!nextConfig.quotaMemory) {
+      nextConfig.quotaMemory = nextConfig.memory;
+    }
+    if (!nextConfig.usedCpu) {
+      nextConfig.usedCpu = estimateUsedCpu(nextConfig.quotaCpu);
+    }
+    if (!nextConfig.usedMemory) {
+      nextConfig.usedMemory = estimateUsedMemory(nextConfig.quotaMemory);
+    }
+    if (nextConfig.mountDisk && !nextConfig.diskSize) {
+      nextConfig.diskSize = '20Gi';
+    }
+    if (nextConfig.mountDisk && !nextConfig.diskUsed) {
+      nextConfig.diskUsed = estimateUsedDisk(nextConfig.diskSize);
+    }
+    if (nextConfig.mountDisk && !nextConfig.mountPath) {
+      nextConfig.mountPath = '/data';
+    }
+
+    node.containerConfig = nextConfig;
+    node.subtitle = '';
+    node.tags = [];
+    node.details = {
+      ...details,
+      image: nextConfig.image,
+      replicas: `${nextConfig.replicas} 副本`,
+      cpu: nextConfig.cpu,
+      memory: nextConfig.memory,
+      quotaCpu: nextConfig.quotaCpu,
+      quotaMemory: nextConfig.quotaMemory,
+      usedCpu: nextConfig.usedCpu,
+      usedMemory: nextConfig.usedMemory,
+      quota: `${nextConfig.quotaCpu} CPU / ${nextConfig.quotaMemory}`,
+      used: `${nextConfig.usedCpu} CPU / ${nextConfig.usedMemory}`,
+      envVars: nextConfig.envVars,
+      entrypoint: nextConfig.startArgs,
+      stateful: nextConfig.mountDisk,
+      diskSize: nextConfig.diskSize,
+      diskUsed: nextConfig.diskUsed,
+      mountPath: nextConfig.mountPath,
+      runtime: `${nextConfig.cpu} CPU / ${nextConfig.memory}`,
+    };
+
+    return node;
+  }
+
+  function defaultDevboxStartCommand(template, port) {
+    const normalizedPort = String(port || (template && template.defaultPort) || '3000').replace(/\/tcp$/i, '');
+    const templateId = template && template.id;
+
+    if (templateId === 'python') {
+      return 'uv run main.py';
+    }
+
+    if (templateId === 'go') {
+      return 'air';
+    }
+
+    if (templateId === 'rust') {
+      return 'cargo run';
+    }
+
+    if (templateId === 'cpp') {
+      return './build/app';
+    }
+
+    if (templateId === 'django') {
+      return `uv run manage.py runserver 0.0.0.0:${normalizedPort}`;
+    }
+
+    if (templateId === 'nextjs' || templateId === 'react' || templateId === 'vue' || templateId === 'nodejs') {
+      return `pnpm dev --host 0.0.0.0 --port ${normalizedPort}`;
+    }
+
+    return 'sleep infinity';
+  }
+
+  function createDevboxConfig(options = {}) {
+    const template =
+      getDevboxTemplateById(options.templateId) ||
+      getDevboxTemplateById(options.templateName) ||
+      resolveDevboxTemplate(options.templateName || options.title || 'nodejs');
+    const cpu = String(options.cpu || '4').trim();
+    const memory = String(options.memory || '8Gi').trim();
+    const diskSize = String(options.diskSize || '50Gi').trim();
+    const port = String(options.port || (template && template.defaultPort) || '3000')
+      .trim()
+      .replace(/\/tcp$/i, '');
+
+    return {
+      templateId: template ? template.id : 'nodejs',
+      templateName: template ? template.name : 'Node.js',
+      version: String(options.version || defaultDevboxVersion(template)).trim(),
+      cpu,
+      memory,
+      quotaCpu: String(options.quotaCpu || cpu).trim(),
+      quotaMemory: String(options.quotaMemory || memory).trim(),
+      usedCpu: String(options.usedCpu || estimateUsedCpu(options.quotaCpu || cpu)).trim(),
+      usedMemory: String(options.usedMemory || estimateUsedMemory(options.quotaMemory || memory)).trim(),
+      diskSize,
+      diskUsed: String(options.diskUsed || estimateUsedDisk(diskSize)).trim(),
+      startCommand: String(options.startCommand || defaultDevboxStartCommand(template, port)).trim(),
+      port,
+    };
+  }
+
+  function syncDevboxNode(node) {
+    if (!node || node.type !== 'devbox') {
+      return node;
+    }
+
+    const details = node.details || {};
+    const nextConfig = {
+      ...createDevboxConfig({
+        templateId: details.templateId,
+        templateName: details.templateName || details.template,
+        version: details.version,
+        cpu: details.cpu,
+        memory: details.memory,
+        quotaCpu: details.quotaCpu || details.cpu,
+        quotaMemory: details.quotaMemory || details.memory,
+        usedCpu: details.usedCpu,
+        usedMemory: details.usedMemory,
+        diskSize: details.diskSize,
+        diskUsed: details.diskUsed,
+        startCommand: details.startCommand,
+        port: details.port,
+        title: node.title,
+      }),
+      ...(node.devboxConfig || {}),
+    };
+
+    if (!nextConfig.quotaCpu) {
+      nextConfig.quotaCpu = nextConfig.cpu;
+    }
+    if (!nextConfig.quotaMemory) {
+      nextConfig.quotaMemory = nextConfig.memory;
+    }
+    if (!nextConfig.usedCpu) {
+      nextConfig.usedCpu = estimateUsedCpu(nextConfig.quotaCpu);
+    }
+    if (!nextConfig.usedMemory) {
+      nextConfig.usedMemory = estimateUsedMemory(nextConfig.quotaMemory);
+    }
+    if (!nextConfig.diskSize) {
+      nextConfig.diskSize = '50Gi';
+    }
+    if (!nextConfig.diskUsed) {
+      nextConfig.diskUsed = estimateUsedDisk(nextConfig.diskSize);
+    }
+
+    node.devboxConfig = nextConfig;
+    node.subtitle = '';
+    node.tags = [];
+    node.details = {
+      ...details,
+      templateId: nextConfig.templateId,
+      templateName: nextConfig.templateName,
+      version: nextConfig.version,
+      cpu: nextConfig.cpu,
+      memory: nextConfig.memory,
+      quotaCpu: nextConfig.quotaCpu,
+      quotaMemory: nextConfig.quotaMemory,
+      usedCpu: nextConfig.usedCpu,
+      usedMemory: nextConfig.usedMemory,
+      diskSize: nextConfig.diskSize,
+      diskUsed: nextConfig.diskUsed,
+      startCommand: nextConfig.startCommand,
+      port: nextConfig.port,
+    };
+
+    return node;
   }
 
   function databaseFlavorFromNode(node) {
@@ -346,6 +797,8 @@
       instanceSpec,
       cpu: String(options.cpu || profile.cpu),
       memory: String(options.memory || profile.memory),
+      usedCpu: String(options.usedCpu || estimateUsedCpu(options.cpu || profile.cpu)),
+      usedMemory: String(options.usedMemory || estimateUsedMemory(options.memory || profile.memory)),
       replicas: String(options.replicas || inferDatabaseReplicas(options.node, '2')),
       storage: String(options.storage || (flavor === 'PostgreSQL' ? '200Gi' : '100Gi')),
       backupPolicy: String(
@@ -609,10 +1062,12 @@
       version: nextConfig.version,
       storage: nextConfig.storage,
       replicas: `${nextConfig.replicas} 副本`,
+      usedCpu: nextConfig.usedCpu,
+      usedMemory: nextConfig.usedMemory,
     };
 
-    node.subtitle = `${nextConfig.instanceSpec} / ${nextConfig.replicas} 副本 / ${nextConfig.cpu} CPU / ${nextConfig.memory}`;
-    node.tags = uniqueTags([nextConfig.instanceSpec, `${nextConfig.replicas} 副本`, `${nextConfig.cpu} CPU`, nextConfig.memory]);
+    node.subtitle = '';
+    node.tags = [];
 
     if (supportsDatabaseWorkspace(node) && !node.databaseWorkspace) {
       node.databaseWorkspace = buildDatabaseWorkspace(node, nextConfig);
@@ -627,6 +1082,18 @@
   }
 
   function hydrateNode(node) {
+    if (node.type === 'entry') {
+      return syncEntryNode(node);
+    }
+
+    if (node.type === 'container') {
+      return syncContainerNode(node);
+    }
+
+    if (node.type === 'devbox') {
+      return syncDevboxNode(node);
+    }
+
     if (node.type === 'database') {
       return syncDatabaseNode(node);
     }
@@ -710,6 +1177,141 @@
       database,
       table,
       view: state.databaseView,
+    };
+  }
+
+  function openEntryContext(nodeId) {
+    const node = getNodeById(nodeId);
+    if (!node || node.type !== 'entry') {
+      state.entryView = null;
+      return;
+    }
+
+    syncEntryNode(node);
+    const current = state.entryView && state.entryView.nodeId === nodeId ? state.entryView : null;
+
+    state.entryView = {
+      nodeId,
+      configDraft: current
+        ? {
+            ...current.configDraft,
+            whitelist: normalizeStringList(current.configDraft && current.configDraft.whitelist),
+          }
+        : {
+            ...node.entryConfig,
+            whitelist: [...node.entryConfig.whitelist],
+          },
+      whitelistDraft: current ? current.whitelistDraft : '',
+      saveState: current ? current.saveState : 'idle',
+      error: current ? current.error : '',
+      info: current ? current.info : '',
+    };
+  }
+
+  function closeEntryContext() {
+    state.entryView = null;
+  }
+
+  function activeEntryContext() {
+    if (!state.entryView || state.entryView.nodeId !== state.selectedNodeId) {
+      return null;
+    }
+
+    const node = getNodeById(state.entryView.nodeId);
+    if (!node || node.type !== 'entry') {
+      return null;
+    }
+
+    syncEntryNode(node);
+
+    return {
+      node,
+      entry: node.entryConfig,
+      view: state.entryView,
+    };
+  }
+
+  function openContainerContext(nodeId) {
+    const node = getNodeById(nodeId);
+    if (!node || node.type !== 'container') {
+      state.containerView = null;
+      return;
+    }
+
+    syncContainerNode(node);
+    const current = state.containerView && state.containerView.nodeId === nodeId ? state.containerView : null;
+
+    state.containerView = {
+      nodeId,
+      configDraft: current ? { ...current.configDraft } : { ...node.containerConfig },
+      saveState: current ? current.saveState : 'idle',
+      error: current ? current.error : '',
+      info: current ? current.info : '',
+    };
+  }
+
+  function closeContainerContext() {
+    state.containerView = null;
+  }
+
+  function activeContainerContext() {
+    if (!state.containerView || state.containerView.nodeId !== state.selectedNodeId) {
+      return null;
+    }
+
+    const node = getNodeById(state.containerView.nodeId);
+    if (!node || node.type !== 'container') {
+      return null;
+    }
+
+    syncContainerNode(node);
+
+    return {
+      node,
+      container: node.containerConfig,
+      view: state.containerView,
+    };
+  }
+
+  function openDevboxContext(nodeId) {
+    const node = getNodeById(nodeId);
+    if (!node || node.type !== 'devbox') {
+      state.devboxView = null;
+      return;
+    }
+
+    syncDevboxNode(node);
+    const current = state.devboxView && state.devboxView.nodeId === nodeId ? state.devboxView : null;
+
+    state.devboxView = {
+      nodeId,
+      configDraft: current ? { ...current.configDraft } : { ...node.devboxConfig },
+      saveState: current ? current.saveState : 'idle',
+      error: current ? current.error : '',
+      info: current ? current.info : '',
+    };
+  }
+
+  function closeDevboxContext() {
+    state.devboxView = null;
+  }
+
+  function activeDevboxContext() {
+    if (!state.devboxView || state.devboxView.nodeId !== state.selectedNodeId) {
+      return null;
+    }
+
+    const node = getNodeById(state.devboxView.nodeId);
+    if (!node || node.type !== 'devbox') {
+      return null;
+    }
+
+    syncDevboxNode(node);
+
+    return {
+      node,
+      devbox: node.devboxConfig,
+      view: state.devboxView,
     };
   }
 
@@ -1012,6 +1614,56 @@
     return fields.some((field) => String((node.databaseConfig || {})[field]) !== String((draft || {})[field]));
   }
 
+  function entryConfigFingerprint(config) {
+    return JSON.stringify({
+      externalDomain: String((config && config.externalDomain) || '').trim(),
+      internalDomain: String((config && config.internalDomain) || '').trim(),
+      cnameHost: String((config && config.cnameHost) || '').trim(),
+      cnameTarget: String((config && config.cnameTarget) || '').trim(),
+      whitelist: normalizeStringList(config && config.whitelist),
+    });
+  }
+
+  function entryConfigChanged(node, draft) {
+    return entryConfigFingerprint(node.entryConfig || {}) !== entryConfigFingerprint(draft || {});
+  }
+
+  function containerConfigFingerprint(config) {
+    return JSON.stringify({
+      image: String((config && config.image) || '').trim(),
+      replicas: String((config && config.replicas) || '').trim(),
+      cpu: String((config && config.cpu) || '').trim(),
+      memory: String((config && config.memory) || '').trim(),
+      envVars: String((config && config.envVars) || '').trim(),
+      startArgs: String((config && config.startArgs) || '').trim(),
+      mountDisk: Boolean(config && config.mountDisk),
+      diskSize: String((config && config.diskSize) || '').trim(),
+      diskUsed: String((config && config.diskUsed) || '').trim(),
+      mountPath: String((config && config.mountPath) || '').trim(),
+    });
+  }
+
+  function containerConfigChanged(node, draft) {
+    return containerConfigFingerprint(node.containerConfig || {}) !== containerConfigFingerprint(draft || {});
+  }
+
+  function devboxConfigFingerprint(config) {
+    return JSON.stringify({
+      templateId: String((config && config.templateId) || '').trim(),
+      version: String((config && config.version) || '').trim(),
+      cpu: String((config && config.cpu) || '').trim(),
+      memory: String((config && config.memory) || '').trim(),
+      diskSize: String((config && config.diskSize) || '').trim(),
+      diskUsed: String((config && config.diskUsed) || '').trim(),
+      startCommand: String((config && config.startCommand) || '').trim(),
+      port: String((config && config.port) || '').trim(),
+    });
+  }
+
+  function devboxConfigChanged(node, draft) {
+    return devboxConfigFingerprint(node.devboxConfig || {}) !== devboxConfigFingerprint(draft || {});
+  }
+
   function saveDatabaseConfig() {
     const context = activeDatabaseContext();
     if (!context) {
@@ -1030,6 +1682,8 @@
     node.databaseConfig = {
       ...node.databaseConfig,
       ...draft,
+      usedCpu: estimateUsedCpu(draft.cpu || node.databaseConfig.cpu),
+      usedMemory: estimateUsedMemory(draft.memory || node.databaseConfig.memory),
     };
     syncDatabaseNode(node);
     state.databaseView.configDraft = { ...node.databaseConfig };
@@ -1041,6 +1695,336 @@
       `数据库配置已更新：${node.title} 调整为 ${node.databaseConfig.instanceSpec}，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，${node.databaseConfig.replicas} 副本。`,
     );
     renderAll();
+  }
+
+  function saveEntryConfig() {
+    const context = activeEntryContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, view } = context;
+    const draft = {
+      ...(view.configDraft || {}),
+      externalDomain: String((view.configDraft && view.configDraft.externalDomain) || '').trim(),
+      internalDomain: String((view.configDraft && view.configDraft.internalDomain) || '').trim(),
+      cnameHost: String((view.configDraft && view.configDraft.cnameHost) || '').trim(),
+      cnameTarget: String((view.configDraft && view.configDraft.cnameTarget) || '').trim(),
+      whitelist: normalizeStringList(view.configDraft && view.configDraft.whitelist),
+    };
+
+    if (!draft.externalDomain || !draft.internalDomain || !draft.cnameHost || !draft.cnameTarget) {
+      state.entryView.error = '请先补全内网域名、外网域名和 CNAME 配置。';
+      state.entryView.info = '';
+      renderSidebarContext();
+      return;
+    }
+
+    node.entryConfig = {
+      ...node.entryConfig,
+      ...draft,
+      whitelist: [...draft.whitelist],
+    };
+    syncEntryNode(node);
+    state.entryView.configDraft = {
+      ...node.entryConfig,
+      whitelist: [...node.entryConfig.whitelist],
+    };
+    state.entryView.saveState = 'done';
+    state.entryView.error = '';
+    state.entryView.info = `${node.entryConfig.cnameHost} -> ${node.entryConfig.cnameTarget}`;
+
+    renderAll();
+  }
+
+  function saveContainerConfig() {
+    const context = activeContainerContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, view } = context;
+    const draft = {
+      ...(view.configDraft || {}),
+      image: String((view.configDraft && view.configDraft.image) || '').trim(),
+      replicas: String((view.configDraft && view.configDraft.replicas) || '').trim(),
+      cpu: String((view.configDraft && view.configDraft.cpu) || '').trim(),
+      memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
+      envVars: String((view.configDraft && view.configDraft.envVars) || '').trim(),
+      startArgs: String((view.configDraft && view.configDraft.startArgs) || '').trim(),
+      mountDisk: Boolean(view.configDraft && view.configDraft.mountDisk),
+      diskSize: String((view.configDraft && view.configDraft.diskSize) || '').trim(),
+      diskUsed: String((view.configDraft && view.configDraft.diskUsed) || '').trim(),
+      mountPath: String((view.configDraft && view.configDraft.mountPath) || '').trim(),
+    };
+
+    if (!draft.image || !draft.replicas || !draft.cpu || !draft.memory) {
+      state.containerView.error = '请先补全镜像、副本数、CPU 和内存。';
+      state.containerView.info = '';
+      renderSidebarContext();
+      return;
+    }
+
+    if (draft.mountDisk && (!draft.diskSize || !draft.mountPath)) {
+      state.containerView.error = '有状态实例需要磁盘大小和挂载路径。';
+      state.containerView.info = '';
+      renderSidebarContext();
+      return;
+    }
+
+    node.containerConfig = {
+      ...node.containerConfig,
+      ...draft,
+      stateful: draft.mountDisk,
+      quotaCpu: draft.cpu,
+      quotaMemory: draft.memory,
+      usedCpu: estimateUsedCpu(draft.cpu),
+      usedMemory: estimateUsedMemory(draft.memory),
+      diskUsed: draft.mountDisk ? draft.diskUsed || estimateUsedDisk(draft.diskSize) : '',
+    };
+    syncContainerNode(node);
+    state.containerView.configDraft = { ...node.containerConfig };
+    state.containerView.saveState = 'done';
+    state.containerView.error = '';
+    state.containerView.info = `${node.containerConfig.replicas} 副本 / ${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}`;
+
+    addMessage(
+      'assistant',
+      `容器配置已更新：${node.title} 调整为 ${node.containerConfig.replicas} 副本，${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}。`,
+    );
+    renderAll();
+  }
+
+  function saveDevboxConfig() {
+    const context = activeDevboxContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, view } = context;
+    const draft = {
+      ...(view.configDraft || {}),
+      cpu: String((view.configDraft && view.configDraft.cpu) || '').trim(),
+      memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
+      diskSize: String((view.configDraft && view.configDraft.diskSize) || '').trim(),
+      diskUsed: String((view.configDraft && view.configDraft.diskUsed) || '').trim(),
+      startCommand: String((view.configDraft && view.configDraft.startCommand) || '').trim(),
+      port: String((view.configDraft && view.configDraft.port) || '').trim(),
+    };
+
+    if (!draft.cpu || !draft.memory || !draft.diskSize) {
+      state.devboxView.error = '请先补全 CPU、内存和磁盘大小。';
+      state.devboxView.info = '';
+      renderSidebarContext();
+      return;
+    }
+
+    node.devboxConfig = {
+      ...node.devboxConfig,
+      ...draft,
+      quotaCpu: draft.cpu,
+      quotaMemory: draft.memory,
+      usedCpu: estimateUsedCpu(draft.cpu),
+      usedMemory: estimateUsedMemory(draft.memory),
+      diskUsed: estimateUsedDisk(draft.diskSize),
+      startCommand: draft.startCommand || defaultDevboxStartCommand(getDevboxTemplateById(node.devboxConfig.templateId), draft.port),
+    };
+    syncDevboxNode(node);
+    state.devboxView.configDraft = { ...node.devboxConfig };
+    state.devboxView.saveState = 'done';
+    state.devboxView.error = '';
+    state.devboxView.info = `${node.devboxConfig.cpu} CPU / ${node.devboxConfig.memory} / ${node.devboxConfig.diskSize}`;
+
+    addMessage(
+      'assistant',
+      `开发环境配置已更新：${cardTitleForNode(node)} 调整为 ${node.devboxConfig.cpu} CPU / ${node.devboxConfig.memory}，磁盘 ${node.devboxConfig.diskSize}。`,
+    );
+    renderAll();
+  }
+
+  function maskConnectionString(value) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+      return '';
+    }
+
+    const maskChunk = (input, options = {}) => {
+      const text = String(input || '');
+      if (!text) {
+        return '';
+      }
+
+      const lead = options.lead == null ? 1 : options.lead;
+      const tail = options.tail == null ? 1 : options.tail;
+      if (text.length <= lead + tail) {
+        return '••••';
+      }
+
+      return `${text.slice(0, lead)}••••${tail ? text.slice(-tail) : ''}`;
+    };
+
+    try {
+      const parsed = new URL(raw);
+      const username = parsed.username ? maskChunk(decodeURIComponent(parsed.username), { lead: 1, tail: 0 }) : '';
+      const password = parsed.password ? '••••' : '';
+      const auth = username ? `${username}${password ? `:${password}` : ''}@` : '';
+      const host = parsed.hostname
+        .split('.')
+        .filter(Boolean)
+        .map((part, index, items) =>
+          index === items.length - 1 && part.length <= 4
+            ? part
+            : maskChunk(part, { lead: Math.min(2, Math.max(1, part.length - 1)), tail: 0 }),
+        )
+        .join('.');
+      const pathname =
+        parsed.pathname && parsed.pathname !== '/'
+          ? `/${parsed.pathname
+              .slice(1)
+              .split('/')
+              .filter(Boolean)
+              .map((part) => maskChunk(part, { lead: 1, tail: 0 }))
+              .join('/')}`
+          : '';
+      const search = parsed.search
+        ? `?${[...parsed.searchParams.keys()].map((key) => `${key}=••••`).join('&')}`
+        : '';
+
+      return `${parsed.protocol}//${auth}${host}${parsed.port ? `:${parsed.port}` : ''}${pathname}${search}`;
+    } catch (_error) {
+      return raw
+        .replace(/:\/\/([^:@/]+):([^@/]+)@/, (_match, user) => `://${maskChunk(user, { lead: 1, tail: 0 })}:••••@`)
+        .replace(/@([^/:?#]+)(:\d+)?/, (_match, host, port = '') => `@${maskChunk(host, { lead: 2, tail: 0 })}${port}`)
+        .replace(/\/([^/?#]+)/, (_match, path) => `/${maskChunk(path, { lead: 1, tail: 0 })}`)
+        .replace(/([?&](?:password|pwd|token|apikey|api_key)=)([^&]+)/gi, '$1••••');
+    }
+  }
+
+  async function copyToClipboard(value) {
+    const text = String(value || '');
+    if (!text) {
+      return;
+    }
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch (_error) {
+      // Fall through to the execCommand fallback.
+    }
+
+    const input = document.createElement('textarea');
+    input.value = text;
+    input.setAttribute('readonly', 'readonly');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    document.body.removeChild(input);
+  }
+
+  function renderContainerMeter(label, used, total, options = {}) {
+    const percent = resourceUsagePercent(used, total, options.kind || 'capacity');
+    const icon = options.icon
+      ? `<span class="material-symbols-outlined container-meter-icon">${options.icon}</span>`
+      : '';
+
+    return `
+      <div class="container-meter">
+        <div class="container-meter-head">
+          <span class="container-meter-label">${icon}<span>${escapeHtml(label)}</span></span>
+          <span class="container-meter-meta">
+            <span class="container-meter-value">${escapeHtml(`${used} / ${total}`)}</span>
+            <strong>${percent}%</strong>
+          </span>
+        </div>
+        <div class="container-meter-track">
+          <span class="container-meter-fill" style="width:${percent}%"></span>
+        </div>
+      </div>
+    `;
+  }
+
+  function showEntryCnameInfo() {
+    const context = activeEntryContext();
+    if (!context) {
+      return;
+    }
+
+    const draft = {
+      ...context.entry,
+      ...(context.view.configDraft || {}),
+      cnameHost: String(
+        (context.view.configDraft && context.view.configDraft.cnameHost) || context.entry.cnameHost || '',
+      ).trim(),
+      cnameTarget: String(
+        (context.view.configDraft && context.view.configDraft.cnameTarget) || context.entry.cnameTarget || '',
+      ).trim(),
+    };
+
+    state.entryView.info = `${draft.cnameHost || '-'} -> ${draft.cnameTarget || '-'}`;
+    state.entryView.error = '';
+    renderSidebarContext();
+  }
+
+  function addEntryWhitelistItem() {
+    const context = activeEntryContext();
+    if (!context) {
+      return;
+    }
+
+    const nextValue = String(context.view.whitelistDraft || '').trim();
+    if (!nextValue) {
+      state.entryView.error = '请输入 IP 地址或 CIDR 网段。';
+      state.entryView.info = '';
+      renderSidebarContext();
+      return;
+    }
+
+    state.entryView.configDraft.whitelist = normalizeStringList([
+      ...((state.entryView.configDraft && state.entryView.configDraft.whitelist) || []),
+      nextValue,
+    ]);
+    state.entryView.whitelistDraft = '';
+    state.entryView.saveState = 'editing';
+    state.entryView.error = '';
+    state.entryView.info = '';
+    renderSidebarContext();
+  }
+
+  function removeEntryWhitelistItem(index) {
+    const context = activeEntryContext();
+    if (!context) {
+      return;
+    }
+
+    state.entryView.configDraft.whitelist = normalizeStringList(
+      ((state.entryView.configDraft && state.entryView.configDraft.whitelist) || []).filter(
+        (_item, itemIndex) => itemIndex !== index,
+      ),
+    );
+    state.entryView.saveState = 'editing';
+    state.entryView.error = '';
+    state.entryView.info = '';
+    renderSidebarContext();
+  }
+
+  function openDomainTarget(value) {
+    const raw = String(value || '').trim();
+    if (!raw) {
+      return;
+    }
+
+    const href = /^https?:\/\//i.test(raw)
+      ? raw
+      : /cluster\.local|\.svc(?:\.|$)|\.internal(?:$|[:/])/i.test(raw)
+      ? `http://${raw}`
+      : `https://${raw}`;
+
+    window.open(href, '_blank', 'noopener,noreferrer');
   }
 
   function executeDatabaseImport() {
@@ -1097,41 +2081,58 @@
           id: 'entry-demo',
           type: 'entry',
           title: 'orders.demo.sealos.run',
-          subtitle: '公网入口 / HTTPS / 自动证书',
-          status: 'Healthy',
-          tags: ['TLS', '公网', '自动续期'],
+          subtitle: '内网域名 / 外网域名',
+          status: 'Accessible',
+          tags: [],
           x: 96,
           y: 110,
           details: {
-            domain: 'orders.demo.sealos.run',
-            target: 'Orders API',
-            policy: '自动证书 + HTTP/2',
+            target: 'orders-api',
+            externalDomain: 'orders.demo.sealos.run',
+            internalDomain: 'orders-api.region.internal',
+            cnameHost: 'orders.demo.sealos.run',
+            cnameTarget: 'gateway.sealos.run',
+            whitelist: ['203.0.113.24', '198.51.100.18', '192.0.2.44/32'],
           },
           operations: ['查看路由', '替换域名', '暂停入口'],
         },
         {
           id: 'container-demo',
           type: 'container',
-          title: 'Orders API',
-          subtitle: '源码部署实例 / Node.js 20 / 自动扩缩容',
+          title: 'orders-api',
+          subtitle: '',
           status: 'Running',
-          tags: ['2 副本', '镜像缓存', '环境变量已注入'],
+          tags: [],
           x: 370,
           y: 230,
           details: {
             image: 'ghcr.io/sealai/orders-api:2026.03.31',
-            runtime: 'Node.js 20 / pnpm',
-            release: 'Blue-Green 已开启',
+            envVars: 'PORT=3000\nDATABASE_URL=postgres://orders:••••@pg-ha.internal:5432/orders',
+          },
+          containerConfig: {
+            image: 'ghcr.io/sealai/orders-api:2026.03.31',
+            replicas: '2',
+            cpu: '2',
+            memory: '4Gi',
+            quotaCpu: '2',
+            quotaMemory: '4Gi',
+            usedCpu: '0.9',
+            usedMemory: '1.8Gi',
+            envVars: 'PORT=3000\nDATABASE_URL=postgres://orders:••••@pg-ha.internal:5432/orders',
+            mountDisk: true,
+            stateful: true,
+            diskSize: '20Gi',
+            mountPath: '/var/lib/orders',
           },
           operations: ['查看日志', '回滚版本', '扩容副本'],
         },
         {
           id: 'db-demo',
           type: 'database',
-          title: 'PostgreSQL HA',
-          subtitle: '高可用数据库 / 自动备份 / 监控已开启',
+          title: 'PostgreSQL',
+          subtitle: '',
           status: 'Protected',
-          tags: ['Primary + Replica', 'PITR', '监控'],
+          tags: [],
           x: 700,
           y: 355,
           details: {
@@ -1139,27 +2140,48 @@
             backup: '每小时快照 + PITR',
             metrics: 'QPS 120 / 复制延迟 30ms',
           },
+          databaseConfig: {
+            flavor: 'PostgreSQL',
+            version: '16.4',
+            instanceSpec: 'db.pg.large',
+            cpu: '8',
+            memory: '16Gi',
+            usedCpu: '3.4',
+            usedMemory: '7.1Gi',
+            replicas: '2',
+            storage: '200Gi',
+            backupPolicy: 'PITR / Hourly',
+          },
           operations: ['查看连接串', '创建备份', '打开监控'],
         },
         {
           id: 'devbox-demo',
           type: 'devbox',
-          title: 'DevBox / Alice',
-          subtitle: 'VS Code Server / Cursor / 预置 Node + Docker',
+          title: 'Alice',
+          subtitle: '',
           status: 'Ready',
-          tags: ['Remote IDE', 'SSH', '持久化工作区'],
+          tags: [],
           x: 712,
           y: 92,
           details: {
             access: 'code-server.sealos.run/devbox/alice',
-            toolchain: 'Node.js / Python / Docker CLI',
-            workspace: '50GB 持久卷',
+            templateId: 'nodejs',
+            templateName: 'Node.js',
+            version: '22',
+            cpu: '4',
+            memory: '8Gi',
+            usedCpu: '1.4',
+            usedMemory: '3.6Gi',
+            diskSize: '50Gi',
+            diskUsed: '18Gi',
+            startCommand: 'pnpm dev --host 0.0.0.0 --port 3000',
+            port: '3000/TCP',
           },
           operations: ['复制连接地址', '重启环境', '挂载仓库'],
         },
       ],
       edges: [
-        { id: 'edge-demo-1', from: 'entry-demo', to: 'container-demo', label: 'HTTPS 443' },
+        { id: 'edge-demo-1', from: 'entry-demo', to: 'container-demo', label: '443' },
         { id: 'edge-demo-2', from: 'container-demo', to: 'db-demo', label: 'DATABASE_URL' },
         { id: 'edge-demo-3', from: 'devbox-demo', to: 'container-demo', label: 'Debug Tunnel' },
       ],
@@ -1199,6 +2221,9 @@
     state.agentBusy = false;
     state.currentTask = '待命';
     state.databaseView = null;
+    state.entryView = null;
+    state.containerView = null;
+    state.devboxView = null;
     state.lastIssue = {
       title: 'FastGPT 启动失败',
       reason: '后端实例缺少 `OPENAI_API_KEY`，入口健康检查连续失败。',
@@ -1285,8 +2310,122 @@
   function renderCanvas() {
     dom.nodeLayer.innerHTML = '';
     const visibleNodes = state.nodes;
+    const dragThreshold = 8;
 
     visibleNodes.forEach((node) => {
+      const summary = nodeSummary(node);
+      const tags = node.type === 'devbox' ? [] : Array.isArray(node.tags) ? node.tags.filter(Boolean) : [];
+      const entryConfig = node.type === 'entry' ? syncEntryNode(node).entryConfig : null;
+      const containerConfig = node.type === 'container' ? syncContainerNode(node).containerConfig : null;
+      const databaseConfig = node.type === 'database' ? syncDatabaseNode(node).databaseConfig : null;
+      const devboxConfig = node.type === 'devbox' ? syncDevboxNode(node).devboxConfig : null;
+      const displayTitle = cardTitleForNode(node);
+      const typeLabel = node.type === 'database' || node.type === 'devbox' ? '' : `<span class="node-type">${labelForType(node.type)}</span>`;
+      const titleMarkup =
+        node.type === 'database'
+          ? `
+              <div class="node-title-row">
+                <h3 class="node-title">${escapeHtml(displayTitle)}</h3>
+                <span class="node-arch-chip">${escapeHtml(databaseTopologyLabel(databaseConfig))}</span>
+              </div>
+            `
+          : `<h3 class="node-title">${escapeHtml(displayTitle)}</h3>`;
+      const headingMarkup =
+        node.type === 'devbox'
+          ? ''
+          : `
+              <div class="node-heading">
+                <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                <div class="node-heading-copy">
+                  ${typeLabel}
+                  ${titleMarkup}
+                </div>
+              </div>
+            `;
+      const entryDomains =
+        node.type === 'entry'
+          ? `
+              <div class="node-domain-stack">
+                <div class="node-domain-row" data-node-domain="${escapeHtml(entryConfig.externalDomain)}">
+                  <span class="node-domain-label">外网域名</span>
+                  <span class="node-domain-main">
+                    <span class="node-domain-value">${escapeHtml(entryConfig.externalDomain)}</span>
+                    <span
+                      class="node-domain-health ${entryConfig.externalStatus === 'issue' ? 'issue' : 'healthy'}"
+                      title="${entryConfig.externalStatus === 'issue' ? '不正常' : '健康'}"
+                    ></span>
+                  </span>
+                </div>
+                <div class="node-domain-row" data-node-domain="${escapeHtml(entryConfig.internalDomain)}">
+                  <span class="node-domain-label">内网域名</span>
+                  <span class="node-domain-main">
+                    <span class="node-domain-value">${escapeHtml(entryConfig.internalDomain)}</span>
+                    <span
+                      class="node-domain-health ${entryConfig.internalStatus === 'issue' ? 'issue' : 'healthy'}"
+                      title="${entryConfig.internalStatus === 'issue' ? '不正常' : '健康'}"
+                    ></span>
+                  </span>
+                </div>
+              </div>
+            `
+          : '';
+      const containerCard =
+        node.type === 'container'
+          ? `
+              <div class="node-container-head">
+                <span class="node-container-label">镜像</span>
+                <span class="node-container-replicas">${escapeHtml(containerConfig.replicas)} 副本</span>
+              </div>
+              <div class="node-container-image">${escapeHtml(containerConfig.image)}</div>
+              <div class="node-container-meters">
+                ${renderContainerMeter('CPU', containerConfig.usedCpu, containerConfig.quotaCpu, { kind: 'cpu' })}
+                ${renderContainerMeter('内存', containerConfig.usedMemory, containerConfig.quotaMemory)}
+                ${
+                  containerConfig.mountDisk
+                    ? renderContainerMeter('磁盘', containerConfig.diskUsed || estimateUsedDisk(containerConfig.diskSize), containerConfig.diskSize, {
+                        kind: 'capacity',
+                        icon: 'storage',
+                      })
+                    : ''
+                }
+              </div>
+            `
+          : '';
+      const databaseCard =
+        node.type === 'database'
+          ? `
+              <div class="node-database-meters">
+                ${renderContainerMeter('CPU', databaseConfig.usedCpu || estimateUsedCpu(databaseConfig.cpu), databaseConfig.cpu, { kind: 'cpu' })}
+                ${renderContainerMeter('内存', databaseConfig.usedMemory || estimateUsedMemory(databaseConfig.memory), databaseConfig.memory)}
+              </div>
+              <div class="node-db-connect">
+                <span class="node-container-label">连接地址</span>
+                <div class="node-db-connect-row">
+                  <span class="node-db-connect-value">${escapeHtml(maskConnectionString((node.details && node.details.connect) || ''))}</span>
+                  <span
+                    class="node-inline-action"
+                    role="button"
+                    tabindex="-1"
+                    data-node-copy="${escapeHtml((node.details && node.details.connect) || '')}"
+                    title="复制连接地址"
+                  >
+                    复制
+                  </span>
+                </div>
+              </div>
+            `
+          : '';
+      const devboxCard = node.type === 'devbox' ? renderNodeDevboxCard(node, devboxConfig) : '';
+      const topIndicators = node.type === 'database' || node.type === 'devbox' ? '' : '<div class="node-led"></div>';
+      const badgeMarkup =
+        node.type === 'database'
+          ? ''
+          : `
+              <div class="node-badge-row">
+                <div class="node-badge">${node.status}</div>
+                ${node.type === 'devbox' ? '<div class="node-kind-badge">开发环境</div>' : ''}
+              </div>
+            `;
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `node-card ${node.id === state.selectedNodeId ? 'active' : ''}`;
@@ -1295,30 +2434,76 @@
       card.style.left = `${node.x}px`;
       card.style.top = `${node.y}px`;
       card.innerHTML = `
-        <div class="node-badge">${node.status}</div>
-        <div class="node-top">
-          <div class="node-heading">
-            <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
-            <div class="node-heading-copy">
-              <span class="node-type">${labelForType(node.type)}</span>
-              <h3 class="node-title">${node.title}</h3>
-            </div>
-          </div>
-          <div class="node-led"></div>
-        </div>
-        <p class="node-subtitle">${node.subtitle}</p>
-        <div class="node-footer">
-          ${node.tags.map((tag) => `<span class="node-tag">${tag}</span>`).join('')}
-        </div>
-        <div class="node-summary">${nodeSummary(node)}</div>
+        ${badgeMarkup}
+        ${
+          headingMarkup || topIndicators
+            ? `
+                <div class="node-top ${node.type === 'database' ? 'node-top-compact' : ''}">
+                  ${headingMarkup}
+                  ${topIndicators}
+                </div>
+              `
+            : ''
+        }
+        ${node.subtitle && node.type !== 'devbox' ? `<p class="node-subtitle">${escapeHtml(node.subtitle)}</p>` : ''}
+        ${entryDomains}
+        ${containerCard}
+        ${databaseCard}
+        ${devboxCard}
+        ${node.type !== 'container' && node.type !== 'devbox' && tags.length ? `<div class="node-footer">${tags.map((tag) => `<span class="node-tag">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+        ${summary ? `<div class="node-summary">${escapeHtml(summary)}</div>` : ''}
       `;
 
-      card.addEventListener('click', () => {
+      card.addEventListener('click', async (event) => {
+        if (state.suppressClickNodeId === node.id) {
+          state.suppressClickNodeId = null;
+          return;
+        }
+
+        const copyTarget = event.target.closest('[data-node-copy]');
+        if (copyTarget) {
+          await copyToClipboard(copyTarget.dataset.nodeCopy || '');
+          return;
+        }
+
+        const domainTarget = event.target.closest('[data-node-domain]');
+        if (domainTarget && node.type === 'entry') {
+          state.selectedNodeId = node.id;
+          closeDatabaseWorkspace();
+          closeContainerContext();
+          closeDevboxContext();
+          openEntryContext(node.id);
+          openDomainTarget(domainTarget.dataset.nodeDomain || '');
+          renderAll();
+          return;
+        }
+
         state.selectedNodeId = node.id;
         if (supportsDatabaseWorkspace(node)) {
           openDatabaseWorkspace(node.id);
+          closeEntryContext();
+          closeContainerContext();
+          closeDevboxContext();
+        } else if (node.type === 'container') {
+          closeDatabaseWorkspace();
+          closeEntryContext();
+          closeDevboxContext();
+          openContainerContext(node.id);
+        } else if (node.type === 'entry') {
+          closeDatabaseWorkspace();
+          closeContainerContext();
+          closeDevboxContext();
+          openEntryContext(node.id);
+        } else if (node.type === 'devbox') {
+          closeDatabaseWorkspace();
+          closeEntryContext();
+          closeContainerContext();
+          openDevboxContext(node.id);
         } else {
           closeDatabaseWorkspace();
+          closeEntryContext();
+          closeContainerContext();
+          closeDevboxContext();
         }
         renderAll();
       });
@@ -1328,11 +2513,18 @@
           return;
         }
 
+        if (event.target.closest('[data-node-domain]') || event.target.closest('[data-node-copy]')) {
+          return;
+        }
+
         const rect = dom.canvasWorld.getBoundingClientRect();
         state.dragging = {
           nodeId: node.id,
           offsetX: event.clientX - rect.left - node.x,
           offsetY: event.clientY - rect.top - node.y,
+          startX: event.clientX,
+          startY: event.clientY,
+          moved: false,
         };
         card.classList.add('dragging');
         card.setPointerCapture(event.pointerId);
@@ -1341,6 +2533,13 @@
       card.addEventListener('pointermove', (event) => {
         if (!state.dragging || state.dragging.nodeId !== node.id) {
           return;
+        }
+
+        if (
+          !state.dragging.moved &&
+          Math.hypot(event.clientX - state.dragging.startX, event.clientY - state.dragging.startY) > dragThreshold
+        ) {
+          state.dragging.moved = true;
         }
 
         const rect = dom.canvasWorld.getBoundingClientRect();
@@ -1366,10 +2565,28 @@
           return;
         }
 
+        if (state.dragging.moved) {
+          state.suppressClickNodeId = node.id;
+          window.setTimeout(() => {
+            if (state.suppressClickNodeId === node.id) {
+              state.suppressClickNodeId = null;
+            }
+          }, 220);
+        }
+
         state.dragging = null;
         card.classList.remove('dragging');
         card.releasePointerCapture(event.pointerId);
         scheduleEdgeRender();
+      });
+
+      card.addEventListener('pointercancel', () => {
+        if (!state.dragging || state.dragging.nodeId !== node.id) {
+          return;
+        }
+
+        state.dragging = null;
+        card.classList.remove('dragging');
       });
 
       dom.nodeLayer.appendChild(card);
@@ -1607,100 +2824,487 @@
       return;
     }
 
-    const context = activeDatabaseContext();
+    const dbContext = activeDatabaseContext();
+    if (dbContext) {
+      const { node, database, view } = dbContext;
+      const draft = view.configDraft || { ...node.databaseConfig };
+      const changed = databaseConfigChanged(node, draft);
+      const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
+      const statusText = view.error
+        ? view.error
+        : changed
+        ? '配置有未保存修改'
+        : view.saveState === 'done'
+        ? '配置已同步到数据库工作区'
+        : '当前配置已生效';
 
-    if (!context) {
-      dom.chatTitle.textContent = '聊天';
-      dom.chatContext.hidden = true;
-      dom.chatContext.className = 'chat-context';
-      dom.chatContext.innerHTML = '';
-      dom.chatInput.placeholder = DEFAULT_CHAT_PLACEHOLDER;
+      dom.chatTitle.textContent = '数据库配置';
+      dom.chatContext.hidden = false;
+      dom.chatContext.className = 'chat-context active';
+      dom.chatInput.placeholder = '继续询问数据库操作、表结构调整，或让 Agent 生成 SQL';
+      dom.chatContext.innerHTML = `
+        <div class="db-config-card">
+          <div class="db-config-header">
+            <div>
+              <strong>${escapeHtml(node.title)}</strong>
+              <span>${escapeHtml(database.name)} / ${escapeHtml(node.databaseConfig.flavor)} ${escapeHtml(node.databaseConfig.version)}</span>
+            </div>
+            <div class="db-chip">${escapeHtml(node.databaseConfig.instanceSpec)}</div>
+          </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">扩缩容与数据库规格。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Instance</span>
+                <select class="agui-select" data-db-config-field="instanceSpec">
+                  ${selectOptions(databaseSpecOptions(node.databaseConfig.flavor), draft.instanceSpec || node.databaseConfig.instanceSpec)}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Replicas</span>
+                <select class="agui-select" data-db-config-field="replicas">
+                  ${selectOptions(['1', '2', '3', '5'], String(draft.replicas || node.databaseConfig.replicas))}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>CPU</span>
+                <select class="agui-select" data-db-config-field="cpu">
+                  ${selectOptions(['1', '2', '4', '8', '16'], String(draft.cpu || node.databaseConfig.cpu))}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Memory</span>
+                <select class="agui-select" data-db-config-field="memory">
+                  ${selectOptions(['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'], String(draft.memory || node.databaseConfig.memory))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">存储与备份策略。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Storage</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(String(draft.storage || node.databaseConfig.storage))}"
+                  data-db-config-field="storage"
+                />
+              </label>
+              <label class="db-config-label">
+                <span>Backup</span>
+                <select class="agui-select" data-db-config-field="backupPolicy">
+                  ${selectOptions(['PITR / Hourly', 'Snapshot / 6h', 'Daily Snapshot'], String(draft.backupPolicy || node.databaseConfig.backupPolicy))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+            <button type="button" class="db-primary-button" data-db-config-action="save">保存配置</button>
+          </div>
+        </div>
+      `;
       return;
     }
 
-    const { node, database, view } = context;
-    const draft = view.configDraft || { ...node.databaseConfig };
-    const changed = databaseConfigChanged(node, draft);
-    const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
-    const statusText = view.error
-      ? view.error
-      : changed
-      ? '配置有未保存修改'
-      : view.saveState === 'done'
-      ? '配置已同步到数据库工作区'
-      : '当前配置已生效';
+    const containerContext = activeContainerContext();
+    if (containerContext) {
+      const { node, container, view } = containerContext;
+      const draft = {
+        ...container,
+        ...(view.configDraft || {}),
+        image: String(((view.configDraft && view.configDraft.image) || container.image) || '').trim(),
+        replicas: String(((view.configDraft && view.configDraft.replicas) || container.replicas) || '').trim(),
+        cpu: String(((view.configDraft && view.configDraft.cpu) || container.cpu) || '').trim(),
+        memory: String(((view.configDraft && view.configDraft.memory) || container.memory) || '').trim(),
+        envVars: String(((view.configDraft && view.configDraft.envVars) || container.envVars) || '').trim(),
+        startArgs: String(((view.configDraft && view.configDraft.startArgs) || container.startArgs) || '').trim(),
+        mountDisk:
+          typeof (view.configDraft && view.configDraft.mountDisk) === 'boolean'
+            ? view.configDraft.mountDisk
+            : Boolean(container.mountDisk),
+        diskSize: String(((view.configDraft && view.configDraft.diskSize) || container.diskSize) || '').trim(),
+        mountPath: String(((view.configDraft && view.configDraft.mountPath) || container.mountPath) || '').trim(),
+      };
+      const changed = containerConfigChanged(node, draft);
+      const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
+      const statusText = view.error
+        ? view.error
+        : view.info
+        ? view.info
+        : changed
+        ? '容器配置有未保存修改'
+        : '当前配置已生效';
 
-    dom.chatTitle.textContent = '数据库配置';
-    dom.chatContext.hidden = false;
-    dom.chatContext.className = 'chat-context active';
-    dom.chatInput.placeholder = '继续询问数据库操作、表结构调整，或让 Agent 生成 SQL';
-    dom.chatContext.innerHTML = `
-      <div class="db-config-card">
-        <div class="db-config-header">
-          <div>
-            <strong>${escapeHtml(node.title)}</strong>
-            <span>${escapeHtml(database.name)} / ${escapeHtml(node.databaseConfig.flavor)} ${escapeHtml(node.databaseConfig.version)}</span>
+      dom.chatTitle.textContent = '容器配置';
+      dom.chatContext.hidden = false;
+      dom.chatContext.className = 'chat-context active';
+      dom.chatInput.placeholder = '继续描述副本、资源、环境变量或镜像启动参数';
+      dom.chatContext.innerHTML = `
+        <div class="db-config-card">
+          <div class="db-config-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node))}</strong>
+              <span>${escapeHtml(draft.image)}</span>
+            </div>
+            <div class="db-chip">${escapeHtml(draft.replicas)} 副本</div>
           </div>
-          <div class="db-chip">${escapeHtml(node.databaseConfig.instanceSpec)}</div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">副本数与容器资源。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Replicas</span>
+                <select class="agui-select" data-container-config-field="replicas">
+                  ${selectOptions(['1', '2', '3', '5'], draft.replicas || '1')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>CPU</span>
+                <select class="agui-select" data-container-config-field="cpu">
+                  ${selectOptions(['0.5', '1', '2', '4', '8'], draft.cpu || '1')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Memory</span>
+                <select class="agui-select" data-container-config-field="memory">
+                  ${selectOptions(['512Mi', '1Gi', '2Gi', '4Gi', '8Gi', '16Gi'], draft.memory || '1Gi')}
+                </select>
+              </label>
+            </div>
+            <div class="container-runtime-copy">
+              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu), draft.cpu, { kind: 'cpu' })}
+              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory), draft.memory)}
+              ${
+                draft.mountDisk
+                  ? renderContainerMeter(
+                      '磁盘',
+                      draft.diskUsed || estimateUsedDisk(draft.diskSize || '20Gi'),
+                      draft.diskSize || '20Gi',
+                      { kind: 'capacity', icon: 'storage' },
+                    )
+                  : ''
+              }
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">镜像与启动参数。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Image</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.image)}" data-container-config-field="image" />
+              </label>
+              <label class="db-config-label">
+                <span>Start Args</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.startArgs)}" data-container-config-field="startArgs" />
+              </label>
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">环境变量。</div>
+            <textarea class="agui-textarea" data-container-config-field="envVars" placeholder="KEY=value&#10;API_KEY=***">${escapeHtml(draft.envVars)}</textarea>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">持久化磁盘。</div>
+            <label class="agui-checkline">
+              <input type="checkbox" ${draft.mountDisk ? 'checked' : ''} data-container-config-field="mountDisk" />
+              <span>有状态容器，挂载磁盘</span>
+            </label>
+            ${
+              draft.mountDisk
+                ? `<div class="db-config-grid">
+                    <label class="db-config-label">
+                      <span>Disk</span>
+                      <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize)}" data-container-config-field="diskSize" />
+                    </label>
+                    <label class="db-config-label">
+                      <span>Used</span>
+                      <input class="agui-input" type="text" value="${escapeHtml(draft.diskUsed || estimateUsedDisk(draft.diskSize || '20Gi'))}" data-container-config-field="diskUsed" />
+                    </label>
+                    <label class="db-config-label">
+                      <span>Mount Path</span>
+                      <input class="agui-input" type="text" value="${escapeHtml(draft.mountPath)}" data-container-config-field="mountPath" />
+                    </label>
+                  </div>`
+                : ''
+            }
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+            <button type="button" class="db-primary-button" data-container-config-action="save">保存配置</button>
+          </div>
         </div>
+      `;
+      return;
+    }
 
-        <section class="db-config-section">
-          <div class="db-config-copy">扩缩容与数据库规格。</div>
-          <div class="db-config-grid">
-            <label class="db-config-label">
-              <span>Instance</span>
-              <select class="agui-select" data-db-config-field="instanceSpec">
-                ${selectOptions(databaseSpecOptions(node.databaseConfig.flavor), draft.instanceSpec || node.databaseConfig.instanceSpec)}
-              </select>
-            </label>
-            <label class="db-config-label">
-              <span>Replicas</span>
-              <select class="agui-select" data-db-config-field="replicas">
-                ${selectOptions(['1', '2', '3', '5'], String(draft.replicas || node.databaseConfig.replicas))}
-              </select>
-            </label>
-            <label class="db-config-label">
-              <span>CPU</span>
-              <select class="agui-select" data-db-config-field="cpu">
-                ${selectOptions(['1', '2', '4', '8', '16'], String(draft.cpu || node.databaseConfig.cpu))}
-              </select>
-            </label>
-            <label class="db-config-label">
-              <span>Memory</span>
-              <select class="agui-select" data-db-config-field="memory">
-                ${selectOptions(['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'], String(draft.memory || node.databaseConfig.memory))}
-              </select>
-            </label>
+    const entryContext = activeEntryContext();
+    if (entryContext) {
+      const { node, entry, view } = entryContext;
+      const draft = {
+        ...entry,
+        ...(view.configDraft || {}),
+        whitelist: normalizeStringList((view.configDraft && view.configDraft.whitelist) || entry.whitelist),
+      };
+      const changed = entryConfigChanged(node, draft);
+      const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
+      const statusText = view.error
+        ? view.error
+        : view.info
+        ? view.info
+        : changed
+        ? '域名配置有未保存修改'
+        : view.saveState === 'done'
+        ? '域名配置已更新'
+        : '当前入口可访问';
+
+      dom.chatTitle.textContent = '域名配置';
+      dom.chatContext.hidden = false;
+      dom.chatContext.className = 'chat-context active';
+      dom.chatInput.placeholder = '继续描述域名策略、白名单规则，或让 Agent 调整入口配置';
+      dom.chatContext.innerHTML = `
+        <div class="entry-config-card">
+          <div class="entry-config-header">
+            <div>
+              <strong>${escapeHtml(draft.externalDomain || node.title)}</strong>
+              <span>CNAME / Whitelist</span>
+            </div>
+            <div class="db-chip">Accessible</div>
           </div>
-        </section>
 
-        <section class="db-config-section">
-          <div class="db-config-copy">存储与备份策略。</div>
-          <div class="db-config-grid">
-            <label class="db-config-label">
-              <span>Storage</span>
+          <section class="entry-config-section">
+            <div class="db-config-copy">点击域名可直接打开。</div>
+            <div class="entry-domain-list">
+              <button
+                type="button"
+                class="entry-domain-button"
+                data-entry-config-action="open-domain"
+                data-entry-domain="${escapeHtml(draft.externalDomain)}"
+              >
+                <span>外网域名</span>
+                <strong class="entry-domain-main">
+                  <span>${escapeHtml(draft.externalDomain)}</span>
+                  <span
+                    class="node-domain-health ${draft.externalStatus === 'issue' ? 'issue' : 'healthy'}"
+                    title="${draft.externalStatus === 'issue' ? '不正常' : '健康'}"
+                  ></span>
+                </strong>
+              </button>
+              <button
+                type="button"
+                class="entry-domain-button"
+                data-entry-config-action="open-domain"
+                data-entry-domain="${escapeHtml(draft.internalDomain)}"
+              >
+                <span>内网域名</span>
+                <strong class="entry-domain-main">
+                  <span>${escapeHtml(draft.internalDomain)}</span>
+                  <span
+                    class="node-domain-health ${draft.internalStatus === 'issue' ? 'issue' : 'healthy'}"
+                    title="${draft.internalStatus === 'issue' ? '不正常' : '健康'}"
+                  ></span>
+                </strong>
+              </button>
+            </div>
+          </section>
+
+          <section class="entry-config-section">
+            <div class="db-config-copy">CNAME 配置。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>CNAME Host</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.cnameHost || '')}"
+                  data-entry-config-field="cnameHost"
+                />
+              </label>
+              <label class="db-config-label">
+                <span>CNAME Target</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.cnameTarget || '')}"
+                  data-entry-config-field="cnameTarget"
+                />
+              </label>
+            </div>
+            <div class="entry-config-actions">
+              <button type="button" class="db-ghost-button" data-entry-config-action="view-cname">查看 CNAME</button>
+              <button type="button" class="db-primary-button" data-entry-config-action="save">更新 CNAME</button>
+            </div>
+          </section>
+
+          <section class="entry-config-section">
+            <div class="db-config-copy">IP公网地址列表。</div>
+            <div class="entry-whitelist-list">
+              ${
+                draft.whitelist.length
+                  ? draft.whitelist
+                      .map(
+                        (item, index) => `
+                          <div class="entry-whitelist-item">
+                            <span>${escapeHtml(item)}</span>
+                            <button
+                              type="button"
+                              class="entry-whitelist-remove"
+                              data-entry-config-action="remove-whitelist"
+                              data-entry-whitelist-index="${index}"
+                            >
+                              删除
+                            </button>
+                          </div>
+                        `,
+                      )
+                      .join('')
+                  : '<div class="agui-empty">当前没有白名单条目。</div>'
+              }
+            </div>
+            <div class="entry-whitelist-editor">
               <input
                 class="agui-input"
                 type="text"
-                value="${escapeHtml(String(draft.storage || node.databaseConfig.storage))}"
-                data-db-config-field="storage"
+                value="${escapeHtml(view.whitelistDraft || '')}"
+                placeholder="203.0.113.24"
+                data-entry-config-field="whitelistDraft"
               />
-            </label>
-            <label class="db-config-label">
-              <span>Backup</span>
-              <select class="agui-select" data-db-config-field="backupPolicy">
-                ${selectOptions(['PITR / Hourly', 'Snapshot / 6h', 'Daily Snapshot'], String(draft.backupPolicy || node.databaseConfig.backupPolicy))}
-              </select>
-            </label>
-          </div>
-        </section>
+              <button type="button" class="db-primary-button" data-entry-config-action="add-whitelist">添加</button>
+            </div>
+          </section>
 
-        <div class="db-config-footer">
-          <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
-          <button type="button" class="db-primary-button" data-db-config-action="save">保存配置</button>
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+          </div>
         </div>
-      </div>
-    `;
+      `;
+      return;
+    }
+
+    const devboxContext = activeDevboxContext();
+    if (devboxContext) {
+      const { node, devbox, view } = devboxContext;
+      const draft = {
+        ...devbox,
+        ...(view.configDraft || {}),
+        cpu: String(((view.configDraft && view.configDraft.cpu) || devbox.cpu) || '').trim(),
+        memory: String(((view.configDraft && view.configDraft.memory) || devbox.memory) || '').trim(),
+        diskSize: String(((view.configDraft && view.configDraft.diskSize) || devbox.diskSize) || '').trim(),
+        startCommand: String(((view.configDraft && view.configDraft.startCommand) || devbox.startCommand) || '').trim(),
+        port: String(((view.configDraft && view.configDraft.port) || devbox.port) || '').trim(),
+      };
+      const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
+      const stack = devboxTemplateStack(template);
+      const changed = devboxConfigChanged(node, draft);
+      const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
+      const statusText = view.error
+        ? view.error
+        : view.info
+        ? view.info
+        : changed
+        ? '开发环境配置有未保存修改'
+        : '当前配置已生效';
+
+      dom.chatTitle.textContent = '开发环境';
+      dom.chatContext.hidden = false;
+      dom.chatContext.className = 'chat-context active';
+      dom.chatInput.placeholder = '继续描述开发环境模板、资源规格或启动命令';
+      dom.chatContext.innerHTML = `
+        <div class="db-config-card">
+          <div class="db-config-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
+              <span>开发环境</span>
+            </div>
+            <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
+          </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">当前工作区模板。</div>
+            <div class="devbox-stack-row">
+              ${stack.map((item) => renderTemplateBadge(item, 'devbox-template-badge')).join('')}
+            </div>
+            <div class="devbox-meta-row">
+              ${draft.version ? `<span class="devbox-meta-chip">v${escapeHtml(draft.version)}</span>` : ''}
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">资源规格。</div>
+            <div class="container-runtime-copy">
+              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu || '4'), draft.cpu || '4', { kind: 'cpu' })}
+              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory || '8Gi'), draft.memory || '8Gi')}
+              ${renderContainerMeter('磁盘', draft.diskUsed || estimateUsedDisk(draft.diskSize || '50Gi'), draft.diskSize || '50Gi', {
+                kind: 'capacity',
+                icon: 'storage',
+              })}
+            </div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>CPU</span>
+                <select class="agui-select" data-devbox-config-field="cpu">
+                  ${selectOptions(['2', '4', '8', '16'], draft.cpu || '4')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Memory</span>
+                <select class="agui-select" data-devbox-config-field="memory">
+                  ${selectOptions(['4Gi', '8Gi', '16Gi', '32Gi'], draft.memory || '8Gi')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Disk</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize || '50Gi')}" data-devbox-config-field="diskSize" />
+              </label>
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">启动命令。</div>
+            <input class="agui-input" type="text" value="${escapeHtml(draft.startCommand || '')}" data-devbox-config-field="startCommand" />
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">可直接通过本地 IDE 连接当前开发环境。</div>
+            <div class="devbox-ide-grid">
+              ${DEVBOX_IDE_CLIENTS.map(
+                (ide) => `
+                  <div class="devbox-ide-item">
+                    <span class="devbox-ide-icon" style="--ide-accent:${ide.accent};">${escapeHtml(ide.mark)}</span>
+                    <div class="devbox-ide-copy">
+                      <strong>${escapeHtml(ide.name)}</strong>
+                      <span>${escapeHtml(ide.note)}</span>
+                    </div>
+                  </div>
+                `,
+              ).join('')}
+            </div>
+            <div class="devbox-connect-hint">打开本地 IDE 后，可使用 Remote SSH、Gateway 或同类远程方式连接这个工作区。</div>
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+            <button type="button" class="db-primary-button" data-devbox-config-action="save">保存配置</button>
+          </div>
+        </div>
+      `;
+      return;
+    }
+
+    dom.chatTitle.textContent = '聊天';
+    dom.chatContext.hidden = true;
+    dom.chatContext.className = 'chat-context';
+    dom.chatContext.innerHTML = '';
+    dom.chatInput.placeholder = DEFAULT_CHAT_PLACEHOLDER;
   }
 
   function formatDatabaseCell(value) {
@@ -1850,6 +3454,12 @@
         `;
       })
       .join('');
+
+    if (dom.chatScroll) {
+      dom.chatScroll.scrollTop = dom.chatScroll.scrollHeight;
+      return;
+    }
+
     dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
   }
 
@@ -1915,6 +3525,15 @@
         if (firstProject) {
           state.selectedNodeId = firstProject.id;
           closeDatabaseWorkspace();
+          closeEntryContext();
+          closeContainerContext();
+          if (supportsDatabaseWorkspace(firstProject)) {
+            openDatabaseWorkspace(firstProject.id);
+          } else if (firstProject.type === 'container') {
+            openContainerContext(firstProject.id);
+          } else if (firstProject.type === 'entry') {
+            openEntryContext(firstProject.id);
+          }
           renderAll();
         }
         return;
@@ -2140,10 +3759,10 @@
     }
 
     if (dom.chatContext) {
-      const updateConfigDraft = (event) => {
+      const updateDatabaseConfigDraft = (event) => {
         const input = event.target.closest('[data-db-config-field]');
         if (!input || !state.databaseView) {
-          return;
+          return false;
         }
 
         state.databaseView.configDraft[input.dataset.dbConfigField] = input.value;
@@ -2156,20 +3775,180 @@
           state.databaseView.configDraft.memory = profile.memory;
         }
 
-        renderSidebarContext();
+        return true;
       };
 
-      dom.chatContext.addEventListener('input', updateConfigDraft);
-      dom.chatContext.addEventListener('change', updateConfigDraft);
-      dom.chatContext.addEventListener('click', (event) => {
-        const button = event.target.closest('[data-db-config-action]');
-        if (!button || !state.databaseView) {
+      const updateContainerConfigDraft = (event) => {
+        const input = event.target.closest('[data-container-config-field]');
+        if (!input || !state.containerView) {
+          return false;
+        }
+
+        const field = input.dataset.containerConfigField;
+        state.containerView.configDraft[field] = input.type === 'checkbox' ? input.checked : input.value;
+        state.containerView.saveState = 'editing';
+        state.containerView.error = '';
+        state.containerView.info = '';
+
+        if (field === 'cpu') {
+          state.containerView.configDraft.quotaCpu = input.value;
+          state.containerView.configDraft.usedCpu = estimateUsedCpu(input.value);
+        }
+
+        if (field === 'memory') {
+          state.containerView.configDraft.quotaMemory = input.value;
+          state.containerView.configDraft.usedMemory = estimateUsedMemory(input.value);
+        }
+
+        if (field === 'mountDisk' && !input.checked) {
+          state.containerView.configDraft.diskSize = '';
+          state.containerView.configDraft.diskUsed = '';
+          state.containerView.configDraft.mountPath = '';
+        }
+
+        if (field === 'mountDisk' && input.checked) {
+          state.containerView.configDraft.diskSize = state.containerView.configDraft.diskSize || '20Gi';
+          state.containerView.configDraft.diskUsed =
+            state.containerView.configDraft.diskUsed || estimateUsedDisk(state.containerView.configDraft.diskSize);
+          state.containerView.configDraft.mountPath = state.containerView.configDraft.mountPath || '/data';
+        }
+
+        return true;
+      };
+
+      const updateEntryConfigDraft = (event) => {
+        const input = event.target.closest('[data-entry-config-field]');
+        if (!input || !state.entryView) {
+          return false;
+        }
+
+        const field = input.dataset.entryConfigField;
+        if (field === 'whitelistDraft') {
+          state.entryView.whitelistDraft = input.value;
+        } else {
+          state.entryView.configDraft[field] = input.value;
+        }
+
+        state.entryView.saveState = 'editing';
+        state.entryView.error = '';
+        state.entryView.info = '';
+        return true;
+      };
+
+      const updateDevboxConfigDraft = (event) => {
+        const input = event.target.closest('[data-devbox-config-field]');
+        if (!input || !state.devboxView) {
+          return false;
+        }
+
+        const field = input.dataset.devboxConfigField;
+        state.devboxView.configDraft[field] = input.value;
+        state.devboxView.saveState = 'editing';
+        state.devboxView.error = '';
+        state.devboxView.info = '';
+
+        if (field === 'cpu') {
+          state.devboxView.configDraft.quotaCpu = input.value;
+          state.devboxView.configDraft.usedCpu = estimateUsedCpu(input.value);
+        }
+
+        if (field === 'memory') {
+          state.devboxView.configDraft.quotaMemory = input.value;
+          state.devboxView.configDraft.usedMemory = estimateUsedMemory(input.value);
+        }
+
+        if (field === 'diskSize') {
+          state.devboxView.configDraft.diskUsed = estimateUsedDisk(input.value || '50Gi');
+        }
+
+        return true;
+      };
+
+      dom.chatContext.addEventListener('input', (event) => {
+        if (updateDatabaseConfigDraft(event)) {
+          renderSidebarContext();
           return;
         }
 
-        if (button.dataset.dbConfigAction === 'save') {
-          saveDatabaseConfig();
+        if (updateContainerConfigDraft(event)) {
+          return;
         }
+
+        if (updateEntryConfigDraft(event)) {
+          return;
+        }
+
+        updateDevboxConfigDraft(event);
+      });
+
+      dom.chatContext.addEventListener('change', (event) => {
+        if (updateDatabaseConfigDraft(event)) {
+          renderSidebarContext();
+          return;
+        }
+
+        if (updateContainerConfigDraft(event)) {
+          renderSidebarContext();
+          return;
+        }
+
+        if (updateEntryConfigDraft(event)) {
+          renderSidebarContext();
+          return;
+        }
+
+        if (updateDevboxConfigDraft(event)) {
+          renderSidebarContext();
+        }
+      });
+
+      dom.chatContext.addEventListener('click', (event) => {
+        const dbButton = event.target.closest('[data-db-config-action]');
+        if (dbButton && state.databaseView && dbButton.dataset.dbConfigAction === 'save') {
+          saveDatabaseConfig();
+          return;
+        }
+
+        const containerButton = event.target.closest('[data-container-config-action]');
+        if (containerButton && state.containerView && containerButton.dataset.containerConfigAction === 'save') {
+          saveContainerConfig();
+          return;
+        }
+
+        const devboxConfigButton = event.target.closest('[data-devbox-config-action]');
+        if (devboxConfigButton && state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'save') {
+          saveDevboxConfig();
+          return;
+        }
+
+        const entryButton = event.target.closest('[data-entry-config-action]');
+        if (entryButton && state.entryView) {
+          if (entryButton.dataset.entryConfigAction === 'open-domain') {
+            openDomainTarget(entryButton.dataset.entryDomain || '');
+            return;
+          }
+
+          if (entryButton.dataset.entryConfigAction === 'view-cname') {
+            showEntryCnameInfo();
+            return;
+          }
+
+          if (entryButton.dataset.entryConfigAction === 'save') {
+            saveEntryConfig();
+            return;
+          }
+
+          if (entryButton.dataset.entryConfigAction === 'add-whitelist') {
+            addEntryWhitelistItem();
+            return;
+          }
+
+          if (entryButton.dataset.entryConfigAction === 'remove-whitelist') {
+            removeEntryWhitelistItem(Number(entryButton.dataset.entryWhitelistIndex || '-1'));
+            return;
+          }
+        }
+
       });
     }
 
@@ -2318,15 +4097,20 @@
       id: entryId,
       type: 'entry',
       title: `${project}.cloud.sealos.run`,
-      subtitle: '源码部署生成的公网入口',
-      status: 'Healthy',
-      tags: ['HTTPS', '自动证书', '访问域名'],
+      subtitle: '内网域名 / 外网域名',
+      status: 'Accessible',
+      tags: [],
       x: baseX,
       y: baseY - 70,
       details: {
-        domain: `${project}.cloud.sealos.run`,
+        target: project,
+        externalDomain: `${project}.cloud.sealos.run`,
+        internalDomain: `${project}-runtime.region.internal`,
+        cnameHost: `${project}.cloud.sealos.run`,
+        cnameTarget: 'gateway.sealos.run',
+        whitelist: defaultEntryWhitelist(),
         source: url,
-        route: `指向 ${project} Runtime`,
+        route: `指向 ${project}`,
       },
       operations: ['查看入口', '切换灰度', '复制域名'],
     });
@@ -2334,16 +4118,22 @@
     state.nodes.push({
       id: appId,
       type: 'container',
-      title: `${project} Runtime`,
-      subtitle: '由源码自动构建并发布的应用实例',
+      title: project,
+      subtitle: '',
       status: 'Running',
-      tags: ['自动构建', '健康检查', '弹性副本'],
+      tags: [],
       x: baseX + 260,
       y: baseY + 40,
       details: {
         image: `registry.local/${project}:latest`,
-        runtime: '自动识别启动命令',
-        release: 'Deployment 已隐藏，展示为实例',
+        envVars: 'PORT=3000',
+      },
+      containerConfig: {
+        image: `registry.local/${project}:latest`,
+        replicas: '2',
+        cpu: '2',
+        memory: '2Gi',
+        envVars: 'PORT=3000',
       },
       operations: ['查看日志', '回滚', '扩容'],
     });
@@ -2352,7 +4142,7 @@
       id: createId('edge'),
       from: entryId,
       to: appId,
-      label: 'HTTPS 443',
+      label: '443',
     });
 
     state.selectedNodeId = appId;
@@ -2390,14 +4180,18 @@
       id: entryId,
       type: 'entry',
       title: domain,
-      subtitle: '镜像任务自动暴露的公网入口',
-      status: 'Healthy',
-      tags: ['80/443', '域名已分配'],
+      subtitle: '内网域名 / 外网域名',
+      status: 'Accessible',
+      tags: [],
       x,
       y: y - 82,
       details: {
-        domain,
-        policy: '自动 HTTPS',
+        target: name,
+        externalDomain: domain,
+        internalDomain: `${entryToken(name)}.region.internal`,
+        cnameHost: domain,
+        cnameTarget: 'gateway.sealos.run',
+        whitelist: defaultEntryWhitelist(),
         image,
       },
       operations: ['复制域名', '查看路由', '暂停入口'],
@@ -2406,18 +4200,28 @@
     state.nodes.push({
       id: containerId,
       type: 'container',
-      title: `${name} Container`,
-      subtitle: '根据镜像分析结果自动运行',
+      title: name,
+      subtitle: '',
       status: 'Running',
-      tags: buildDockerTags(options),
+      tags: [],
       x: x + 260,
       y,
       details: {
         image,
-        entrypoint: options.startArgs || '自动解析',
-        env: envSummary,
-        runtime: runtimeSummary,
+        envVars: options.envVars || '',
         route: `${domain} -> ${port}/TCP`,
+      },
+      containerConfig: {
+        image,
+        replicas: '1',
+        cpu: String(options.cpu || '1'),
+        memory: String(options.memory || '1Gi'),
+        envVars: options.envVars || '',
+        startArgs: options.startArgs || '',
+        mountDisk: Boolean(options.mountDisk),
+        stateful: Boolean(options.mountDisk),
+        diskSize: options.diskSize || '10Gi',
+        mountPath: options.mountPath || '/data',
       },
       operations: ['追加环境变量', '查看日志', '重启'],
     });
@@ -2463,10 +4267,10 @@
     const databaseNode = syncDatabaseNode({
       id,
       type: 'database',
-      title: `${flavor} Cluster`,
-      subtitle: `${instanceSpec} / ${replicas} 副本 / 连接信息已生成`,
+      title: `${flavor}`,
+      subtitle: '',
       status: 'Protected',
-      tags: [instanceSpec, `${replicas} 副本`, '连接串'],
+      tags: [],
       x,
       y,
       details: {
@@ -2521,10 +4325,10 @@
     const appDatabaseNode = syncDatabaseNode({
       id: dbId,
       type: 'database',
-      title: `${appName} Data`,
-      subtitle: appTemplate.databaseSubtitle,
+      title: `${appName} DB`,
+      subtitle: '',
       status: 'Protected',
-      tags: appTemplate.databaseTags,
+      tags: [],
       x: baseX + 545,
       y: baseY + 136,
       details: {
@@ -2540,14 +4344,18 @@
         id: entryId,
         type: 'entry',
         title: `${appTemplate.slug}.suite.sealos.run`,
-        subtitle: '模板应用统一入口',
-        status: 'Healthy',
-        tags: ['公网', 'HTTPS'],
+        subtitle: '内网域名 / 外网域名',
+        status: 'Accessible',
+        tags: [],
         x: baseX,
         y: baseY - 120,
         details: {
-          domain: `${appTemplate.slug}.suite.sealos.run`,
-          app: appName,
+          target: `${appName} Frontend`,
+          externalDomain: `${appTemplate.slug}.suite.sealos.run`,
+          internalDomain: `${appTemplate.slug}-frontend.region.internal`,
+          cnameHost: `${appTemplate.slug}.suite.sealos.run`,
+          cnameTarget: 'gateway.sealos.run',
+          whitelist: defaultEntryWhitelist(),
           route: 'Frontend Gateway',
         },
         operations: ['切换域名', '查看流量', '暂停入口'],
@@ -2572,15 +4380,21 @@
         id: backId,
         type: 'container',
         title: `${appName} Backend`,
-        subtitle: appTemplate.backendSubtitle,
+        subtitle: '',
         status: 'Running',
-        tags: appTemplate.backendTags,
+        tags: [],
         x: baseX + 250,
         y: baseY + 168,
         details: {
-          runtime: appTemplate.runtime,
-          config: appTemplate.backendConfig,
-          scaling: appTemplate.scaling,
+          image: `registry.local/templates/${appTemplate.slug}-backend:latest`,
+          envVars: `${appTemplate.databaseEnv}=••••`,
+        },
+        containerConfig: {
+          image: `registry.local/templates/${appTemplate.slug}-backend:latest`,
+          replicas: '2',
+          cpu: '2',
+          memory: '4Gi',
+          envVars: `${appTemplate.databaseEnv}=••••`,
         },
         operations: ['查看日志', '更改密钥', '重启'],
       },
@@ -2588,7 +4402,7 @@
     );
 
     state.edges.push(
-      { id: createId('edge'), from: entryId, to: frontId, label: 'HTTPS' },
+      { id: createId('edge'), from: entryId, to: frontId, label: '443' },
       { id: createId('edge'), from: frontId, to: backId, label: 'API Traffic' },
       { id: createId('edge'), from: backId, to: dbId, label: appTemplate.databaseEnv },
     );
@@ -2635,34 +4449,43 @@
         id: entryId,
         type: 'entry',
         title: domain,
-        subtitle: `DevBox 入口 / ${port}/TCP / 自动 HTTPS`,
-        status: 'Healthy',
-        tags: ['DevBox', `${port}/TCP`, 'HTTPS'],
+        subtitle: '内网域名 / 外网域名',
+        status: 'Accessible',
+        tags: [],
         x: x - 250,
         y: y - 48,
         details: {
-          domain,
-          target: `DevBox / ${owner}`,
-          policy: '自动 HTTPS + Workspace 访问控制',
+          target: owner,
+          externalDomain: domain,
+          internalDomain: `${template.id}-devbox.region.internal`,
+          cnameHost: domain,
+          cnameTarget: 'gateway.sealos.run',
+          whitelist: defaultEntryWhitelist(),
+          port: `${port}/TCP`,
         },
         operations: ['复制域名', '替换域名', '暂停入口'],
       },
       {
         id,
         type: 'devbox',
-        title: `DevBox / ${owner}`,
-        subtitle: `${template.name} ${version} / ${cpu} CPU / ${memory} RAM`,
+        title: owner,
+        subtitle: '',
         status: 'Ready',
-        tags: [template.name, `v${version}`, `${port}/TCP`, `${cpu} CPU`, memory],
+        tags: [],
         x,
         y,
         details: {
           access: domain,
-          toolchain: `${template.toolchain} / v${version}`,
-          client: 'VS Code / Cursor / Web',
-          runtime: `${cpu} CPU / ${memory} RAM`,
-          template: `${template.type} / ${template.name}`,
+          templateId: template.id,
+          templateName: template.name,
           version,
+          cpu,
+          memory,
+          usedCpu: estimateUsedCpu(cpu),
+          usedMemory: estimateUsedMemory(memory),
+          diskSize: '50Gi',
+          diskUsed: estimateUsedDisk('50Gi'),
+          startCommand: defaultDevboxStartCommand(template, port),
           port: `${port}/TCP`,
         },
         operations: ['复制访问地址', '挂载仓库', '重启容器'],
@@ -2715,8 +4538,8 @@
     }
 
     if (entry) {
-      entry.status = 'Healthy';
-      entry.tags = uniqueTags(entry.tags.concat(['可访问']));
+      entry.status = 'Accessible';
+      syncEntryNode(entry);
     }
 
     addMessage(
@@ -2768,7 +4591,7 @@
   function labelForType(type) {
     return {
       entry: '入口域名',
-      container: '应用实例',
+      container: '容器实例',
       database: '数据库',
       app: '封装应用',
       devbox: '开发环境',
@@ -2779,7 +4602,7 @@
     return {
       entry: 'router',
       container: 'inventory_2',
-      database: 'database',
+      database: 'storage',
       app: 'widgets',
       devbox: 'terminal',
     }[type];
@@ -2797,7 +4620,7 @@
 
   function metricForNode(node) {
     return {
-      Healthy: 92,
+      Accessible: 92,
       Running: 78,
       Protected: 88,
       Ready: 85,
@@ -2806,6 +4629,10 @@
   }
 
   function nodeSummary(node) {
+    if (node.type === 'entry' || node.type === 'container' || node.type === 'database' || node.type === 'devbox') {
+      return '';
+    }
+
     const detail = node.details || {};
 
     return (
@@ -2993,6 +4820,126 @@
     return (template && Array.isArray(template.versions) && template.versions[0]) || 'latest';
   }
 
+  function cardTitleForNode(node) {
+    const title = String((node && node.title) || '').trim();
+    if (!title) {
+      return '';
+    }
+
+    if (node.type === 'container') {
+      if (title === '容器示例') {
+        const image = String((node.details && node.details.image) || '').trim();
+        const imageName = image ? image.split('/').pop().replace(/[:.].*$/, '') : '';
+        return imageName || '';
+      }
+
+      return title.replace(/\s+container$/i, '').trim();
+    }
+
+    if (node.type === 'devbox') {
+      return title.replace(/^devbox\s*\/\s*/i, '').trim();
+    }
+
+    return title;
+  }
+
+  function databaseTopologyLabel(config) {
+    const replicas = Number(String((config && config.replicas) || '1').trim());
+    return Number.isFinite(replicas) && replicas > 1 ? '高可用' : '单副本';
+  }
+
+  function resolveDevboxNodeTemplate(node) {
+    if (!node || node.type !== 'devbox') {
+      return null;
+    }
+
+    const details = node.details || {};
+    const explicit = getDevboxTemplateById(details.templateId);
+    if (explicit) {
+      return explicit;
+    }
+
+    const hint = [details.templateName, details.template, details.toolchain, node.title, node.subtitle]
+      .filter(Boolean)
+      .join(' ');
+
+    return resolveDevboxTemplate(hint || 'nodejs');
+  }
+
+  function devboxTemplateStack(template) {
+    if (!template) {
+      return [];
+    }
+
+    const stackMap = {
+      nextjs: ['nextjs', 'nodejs'],
+      react: ['react', 'nodejs'],
+      vue: ['vue', 'nodejs'],
+      django: ['django', 'python'],
+    };
+    const ids = stackMap[template.id] || [template.id];
+
+    return ids
+      .map((id) => getDevboxTemplateById(id))
+      .filter(Boolean)
+      .filter((item, index, list) => list.findIndex((current) => current.id === item.id) === index);
+  }
+
+  function renderTemplateBadge(template, className = 'node-devbox-badge') {
+    if (!template) {
+      return '';
+    }
+
+    return `
+      <span class="${className}" style="--template-accent:${template.accent};" title="${escapeHtml(template.name)}">
+        ${renderDevboxTemplateIcon(template)}
+      </span>
+    `;
+  }
+
+  function renderNodeDevboxCard(node, config) {
+    const template = resolveDevboxNodeTemplate(node);
+    const stack = devboxTemplateStack(template);
+    const current = config || (node && node.devboxConfig) || {};
+
+    return `
+      <div class="node-devbox-head">
+        <div class="node-devbox-stack">
+          ${stack.map((item) => renderTemplateBadge(item)).join('')}
+          <strong class="node-devbox-owner">${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
+        </div>
+        <div class="node-led"></div>
+      </div>
+      <div class="node-container-meters">
+        ${renderContainerMeter('CPU', current.usedCpu || estimateUsedCpu(current.cpu || '4'), current.cpu || '4', { kind: 'cpu' })}
+        ${renderContainerMeter('内存', current.usedMemory || estimateUsedMemory(current.memory || '8Gi'), current.memory || '8Gi')}
+        ${renderContainerMeter('磁盘', current.diskUsed || estimateUsedDisk(current.diskSize || '50Gi'), current.diskSize || '50Gi', {
+          kind: 'capacity',
+          icon: 'storage',
+        })}
+      </div>
+    `;
+  }
+
+  function renderDevboxTemplateIcon(template) {
+    if (!template) {
+      return '';
+    }
+
+    if (template.icon === 'cpp' || template.id === 'cpp') {
+      return `
+        <svg viewBox="0 0 28 28" aria-hidden="true" focusable="false">
+          <polygon points="14,2.6 23.2,7.9 23.2,20.1 14,25.4 4.8,20.1 4.8,7.9" fill="none" stroke="currentColor" stroke-width="1.5"></polygon>
+          <text x="11.2" y="17.3" text-anchor="middle" font-size="11" font-weight="700" font-family="JetBrains Mono, monospace" fill="currentColor">C</text>
+          <text x="18.1" y="13.3" text-anchor="middle" font-size="7.2" font-weight="700" font-family="JetBrains Mono, monospace" fill="currentColor">+</text>
+          <text x="18.1" y="19.2" text-anchor="middle" font-size="7.2" font-weight="700" font-family="JetBrains Mono, monospace" fill="currentColor">+</text>
+        </svg>
+      `;
+    }
+
+    return `<span class="agui-template-mark">${escapeHtml(template.mark)}</span>`;
+  }
+
   function getAppById(id) {
     return APP_LIBRARY.find((app) => app.id === id) || null;
   }
@@ -3081,6 +5028,10 @@
 
     if (lower.includes('rust')) {
       return getDevboxTemplateById('rust') || DEVBOX_TEMPLATES[0];
+    }
+
+    if (lower.includes('c++') || lower.includes('cpp')) {
+      return getDevboxTemplateById('cpp') || DEVBOX_TEMPLATES[0];
     }
 
     if (lower.includes('django')) {
@@ -3932,7 +5883,7 @@
                       data-template-id="${template.id}"
                       data-message-id="${message.id}"
                     >
-                      <span class="agui-template-icon" style="--template-accent:${template.accent};">${escapeHtml(template.mark)}</span>
+                      <span class="agui-template-icon" style="--template-accent:${template.accent};">${renderDevboxTemplateIcon(template)}</span>
                       <span class="agui-template-copy">
                         <strong>${escapeHtml(template.name)}</strong>
                       </span>

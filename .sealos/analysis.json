@@ -1,0 +1,48 @@
+{
+  "generated_at": "2026-04-01T05:11:19Z",
+  "project": {
+    "github_url": "https://github.com/fanux/sealai",
+    "work_dir": "/Users/fanux/Desktop/aicoding/sealai",
+    "repo_name": "sealai",
+    "branch": "main"
+  },
+  "score": {
+    "total": 8,
+    "verdict": "Good",
+    "dimensions": {
+      "statelessness": 2,
+      "config": 1,
+      "scalability": 2,
+      "startup": 1,
+      "observability": 1,
+      "boundaries": 1
+    }
+  },
+  "language": "node",
+  "all_languages": [
+    "node"
+  ],
+  "framework": "node-http-static",
+  "package_manager": "npm",
+  "port": 3000,
+  "databases": [],
+  "runtime_version": {
+    "node": "24",
+    "source": "manual-server-analysis"
+  },
+  "env_vars": {
+    "HOST": {
+      "category": "optional",
+      "description": "Bind address for the HTTP server",
+      "default": "0.0.0.0"
+    },
+    "PORT": {
+      "category": "optional",
+      "description": "Public HTTP port for the static prototype server",
+      "default": "3000"
+    }
+  },
+  "has_dockerfile": true,
+  "complexity_tier": "L1",
+  "image_ref": "ghcr.io/fanux/sealai:20260401-154000"
+}

@@ -1,0 +1,161 @@
+apiVersion: app.sealos.io/v1
+kind: Template
+metadata:
+  name: sealai
+spec:
+  title: 'SealAI'
+  url: 'https://github.com/fanux/sealai'
+  gitRepo: 'https://github.com/fanux/sealai'
+  author: 'fanux'
+  description: 'SealAI is a Sealos-oriented AI workspace prototype for deploying source code, images, databases, templates, and DevBox resources.'
+  icon: 'https://raw.githubusercontent.com/labring-actions/templates/kb-0.9/template/sealai/logo.svg'
+  readme: 'https://raw.githubusercontent.com/labring-actions/templates/kb-0.9/template/sealai/README.md'
+  templateType: inline
+  locale: en
+  i18n:
+    zh:
+      description: 'SealAI 是一个面向 Sealos 的 AI 工作区原型，用于部署源码、镜像、数据库、应用模板和 DevBox 资源。'
+      readme: 'https://raw.githubusercontent.com/labring-actions/templates/kb-0.9/template/sealai/README_zh.md'
+  categories:
+    - ai
+    - frontend
+    - dev-ops
+  defaults:
+    app_name:
+      type: string
+      value: sealai-${{ random(8) }}
+    app_host:
+      type: string
+      value: sealai-${{ random(8) }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${{ defaults.app_name }}
+  labels:
+    app: ${{ defaults.app_name }}
+    cloud.sealos.io/app-deploy-manager: ${{ defaults.app_name }}
+spec:
+  revisionHistoryLimit: 1
+  selector:
+    matchLabels:
+      app: ${{ defaults.app_name }}
+  template:
+    metadata:
+      labels:
+        app: ${{ defaults.app_name }}
+        cloud.sealos.io/app-deploy-manager: ${{ defaults.app_name }}
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-pull-secret
+      containers:
+        - name: ${{ defaults.app_name }}
+          image: ghcr.io/fanux/sealai:20260401-154000
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: '3000'
+          ports:
+            - containerPort: 3000
+              name: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          resources:
+            limits:
+              cpu: 200m
+              memory: 256Mi
+            requests:
+              cpu: 20m
+              memory: 25Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ${{ defaults.app_name }}
+  labels:
+    app: ${{ defaults.app_name }}
+    cloud.sealos.io/app-deploy-manager: ${{ defaults.app_name }}
+spec:
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+  selector:
+    app: ${{ defaults.app_name }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ${{ defaults.app_name }}
+  labels:
+    app: ${{ defaults.app_name }}
+    cloud.sealos.io/app-deploy-manager: ${{ defaults.app_name }}
+    cloud.sealos.io/app-deploy-manager-domain: ${{ defaults.app_host }}
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    nginx.ingress.kubernetes.io/proxy-body-size: 32m
+    nginx.ingress.kubernetes.io/server-snippet: |
+      client_header_buffer_size 64k;
+      large_client_header_buffers 4 128k;
+    nginx.ingress.kubernetes.io/ssl-redirect: 'true'
+    nginx.ingress.kubernetes.io/backend-protocol: HTTP
+    nginx.ingress.kubernetes.io/client-body-buffer-size: 64k
+    nginx.ingress.kubernetes.io/proxy-buffer-size: 64k
+    nginx.ingress.kubernetes.io/proxy-send-timeout: '300'
+    nginx.ingress.kubernetes.io/proxy-read-timeout: '300'
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      if ($request_uri ~* \.(js|css|gif|jpe?g|png)) {
+        expires 30d;
+        add_header Cache-Control "public";
+      }
+spec:
+  rules:
+    - host: ${{ defaults.app_host }}.${{ SEALOS_CLOUD_DOMAIN }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ${{ defaults.app_name }}
+                port:
+                  number: 3000
+  tls:
+    - hosts:
+        - ${{ defaults.app_host }}.${{ SEALOS_CLOUD_DOMAIN }}
+      secretName: ${{ SEALOS_CERT_SECRET_NAME }}
+---
+apiVersion: app.sealos.io/v1
+kind: App
+metadata:
+  name: ${{ defaults.app_name }}
+  labels:
+    cloud.sealos.io/app-deploy-manager: ${{ defaults.app_name }}
+spec:
+  data:
+    url: https://${{ defaults.app_host }}.${{ SEALOS_CLOUD_DOMAIN }}
+  displayType: normal
+  icon: https://raw.githubusercontent.com/labring-actions/templates/kb-0.9/template/sealai/logo.svg
+  name: SealAI
+  type: link
