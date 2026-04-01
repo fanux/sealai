@@ -1437,22 +1437,42 @@
     };
   }
 
+  function erCardMetrics(table) {
+    const visibleRowCount = Math.min((table && table.columns ? table.columns.length : 0), 4) + ((table && table.columns && table.columns.length > 4) ? 1 : 0);
+
+    return {
+      width: 228,
+      height: Math.max(132, 56 + visibleRowCount * 16 + Math.max(0, visibleRowCount - 1) * 6),
+    };
+  }
+
   function renderDatabaseErPanel(database) {
     const tables = database.tables || [];
     const layout = erLayoutForTables(tables);
     const relations = inferDatabaseRelations(database);
-    const width = 640;
-    const height = Math.max(360, Math.max(...layout.map((item) => item.y), 0) + 188);
-    const cardWidth = 228;
-    const cardHeight = 132;
+    const metricsMap = Object.fromEntries(tables.map((table) => [table.name, erCardMetrics(table)]));
+    const width = Math.max(
+      640,
+      ...tables.map((table, index) => {
+        const metrics = metricsMap[table.name];
+        return layout[index].x + metrics.width + 56;
+      }),
+    );
+    const height = Math.max(
+      360,
+      ...tables.map((table, index) => {
+        const metrics = metricsMap[table.name];
+        return layout[index].y + metrics.height + 56;
+      }),
+    );
     const positionMap = Object.fromEntries(
-      tables.map((table, index) => [table.name, { ...layout[index], width: cardWidth, height: cardHeight }]),
+      tables.map((table, index) => [table.name, { ...layout[index], ...metricsMap[table.name] }]),
     );
 
     return `
       <div class="db-panel db-er-panel">
-        <div class="db-er-stage" style="height:${height}px;">
-          <svg class="db-er-layer" viewBox="0 0 ${width} ${height}" aria-hidden="true">
+        <div class="db-er-stage" style="width:${width}px; height:${height}px;">
+          <svg class="db-er-layer" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}" aria-hidden="true">
             ${relations
               .map((relation) => {
                 const from = positionMap[relation.from];

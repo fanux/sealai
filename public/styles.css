@@ -617,6 +617,7 @@ button {
   padding: 10px 12px;
   border-bottom: 1px solid rgba(152, 160, 255, 0.08);
   vertical-align: top;
+  text-align: left;
 }
 
 .db-data-table th,
