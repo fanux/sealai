@@ -5,12 +5,12 @@
     "app_host": "sealai-yjhjqxcq",
     "namespace": "ns-bxkx84bw",
     "region": "sealosgzg.site",
-    "image": "ghcr.io/fanux/sealai:20260401-154000",
+    "image": "ghcr.io/fanux/sealai:20260402-164429",
     "docker_hub_user": null,
     "repo_name": "sealai",
     "url": "https://sealai-yjhjqxcq.sealosgzg.site",
     "deployed_at": "2026-04-01T07:26:22Z",
-    "last_updated_at": "2026-04-01T07:47:19Z"
+    "last_updated_at": "2026-04-02T08:48:58Z"
   },
   "history": [
     {
@@ -29,6 +29,15 @@
       "method": "kubectl-set-image",
       "status": "success",
       "note": "Switched to lightweight scratch image after the original image pull was too slow."
+    },
+    {
+      "at": "2026-04-02T08:48:58Z",
+      "action": "set-image",
+      "previous_image": "ghcr.io/fanux/sealai:20260402-104611",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "method": "kubectl-set-image",
+      "status": "success",
+      "note": "Updated the Sealos deployment with the latest UI and project creation flow changes."
     }
   ]
 }

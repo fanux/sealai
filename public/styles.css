@@ -866,11 +866,20 @@ button {
 }
 
 .chat-context {
-  display: none;
+  display: none !important;
 }
 
 .chat-context.active {
-  display: block;
+  display: none !important;
+}
+
+.chat-config-card {
+  flex: 1;
+}
+
+.chat-config-card.is-history {
+  opacity: 0.8;
+  border-color: var(--line);
 }
 
 .db-config-card {

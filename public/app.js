@@ -288,6 +288,7 @@
     devboxView: null,
     projectListOpen: false,
     suppressClickNodeId: null,
+    activeConfigMessageId: null,
   };
 
   let rafHandle = 0;
@@ -2110,6 +2111,132 @@
     window.open(href, '_blank', 'noopener,noreferrer');
   }
 
+  function isActiveConfigMessageTarget(target) {
+    const card = target && target.closest ? target.closest('[data-config-message-id]') : null;
+    return Boolean(card && card.dataset.configMessageId === state.activeConfigMessageId);
+  }
+
+  function updateDatabaseConfigDraftFromChat(target) {
+    if (!isActiveConfigMessageTarget(target)) {
+      return false;
+    }
+
+    const input = target.closest('[data-db-config-field]');
+    if (!input || !state.databaseView) {
+      return false;
+    }
+
+    state.databaseView.configDraft[input.dataset.dbConfigField] = input.value;
+    state.databaseView.saveState = 'editing';
+    state.databaseView.error = '';
+
+    if (input.dataset.dbConfigField === 'instanceSpec') {
+      const profile = databaseSpecProfile(input.value);
+      state.databaseView.configDraft.cpu = profile.cpu;
+      state.databaseView.configDraft.memory = profile.memory;
+    }
+
+    return true;
+  }
+
+  function updateContainerConfigDraftFromChat(target) {
+    if (!isActiveConfigMessageTarget(target)) {
+      return false;
+    }
+
+    const input = target.closest('[data-container-config-field]');
+    if (!input || !state.containerView) {
+      return false;
+    }
+
+    const field = input.dataset.containerConfigField;
+    state.containerView.configDraft[field] = input.type === 'checkbox' ? input.checked : input.value;
+    state.containerView.saveState = 'editing';
+    state.containerView.error = '';
+    state.containerView.info = '';
+
+    if (field === 'cpu') {
+      state.containerView.configDraft.quotaCpu = input.value;
+      state.containerView.configDraft.usedCpu = estimateUsedCpu(input.value);
+    }
+
+    if (field === 'memory') {
+      state.containerView.configDraft.quotaMemory = input.value;
+      state.containerView.configDraft.usedMemory = estimateUsedMemory(input.value);
+    }
+
+    if (field === 'mountDisk' && !input.checked) {
+      state.containerView.configDraft.diskSize = '';
+      state.containerView.configDraft.diskUsed = '';
+      state.containerView.configDraft.mountPath = '';
+    }
+
+    if (field === 'mountDisk' && input.checked) {
+      state.containerView.configDraft.diskSize = state.containerView.configDraft.diskSize || '20Gi';
+      state.containerView.configDraft.diskUsed =
+        state.containerView.configDraft.diskUsed || estimateUsedDisk(state.containerView.configDraft.diskSize);
+      state.containerView.configDraft.mountPath = state.containerView.configDraft.mountPath || '/data';
+    }
+
+    return true;
+  }
+
+  function updateEntryConfigDraftFromChat(target) {
+    if (!isActiveConfigMessageTarget(target)) {
+      return false;
+    }
+
+    const input = target.closest('[data-entry-config-field]');
+    if (!input || !state.entryView) {
+      return false;
+    }
+
+    const field = input.dataset.entryConfigField;
+    if (field === 'whitelistDraft') {
+      state.entryView.whitelistDraft = input.value;
+    } else {
+      state.entryView.configDraft[field] = input.value;
+    }
+
+    state.entryView.saveState = 'editing';
+    state.entryView.error = '';
+    state.entryView.info = '';
+    return true;
+  }
+
+  function updateDevboxConfigDraftFromChat(target) {
+    if (!isActiveConfigMessageTarget(target)) {
+      return false;
+    }
+
+    const input = target.closest('[data-devbox-config-field]');
+    if (!input || !state.devboxView) {
+      return false;
+    }
+
+    const field = input.dataset.devboxConfigField;
+    state.devboxView.configDraft[field] = input.value;
+    state.devboxView.saveState = 'editing';
+    state.devboxView.error = '';
+    state.devboxView.info = '';
+
+    if (field === 'cpu') {
+      state.devboxView.configDraft.quotaCpu = input.value;
+      state.devboxView.configDraft.usedCpu = estimateUsedCpu(input.value);
+    }
+
+    if (field === 'memory') {
+      state.devboxView.configDraft.quotaMemory = input.value;
+      state.devboxView.configDraft.usedMemory = estimateUsedMemory(input.value);
+    }
+
+    if (field === 'diskSize') {
+      state.devboxView.configDraft.diskUsed = estimateUsedDisk(input.value || '50Gi');
+    }
+
+    return true;
+  }
+
   function executeDatabaseImport() {
     const context = activeDatabaseContext();
     if (!context) {
@@ -2322,6 +2449,7 @@
       text,
       kind: 'text',
     };
+    state.activeConfigMessageId = null;
     state.messages.push(message);
     renderChat();
     return message;
@@ -2335,8 +2463,68 @@
       ui,
       payload,
     };
+    if (!['database-config', 'container-config', 'entry-config', 'devbox-config'].includes(ui)) {
+      state.activeConfigMessageId = null;
+    }
     state.messages.push(message);
     renderChat();
+    return message;
+  }
+
+  function configUiForNode(node) {
+    if (!node) {
+      return '';
+    }
+
+    if (supportsDatabaseWorkspace(node)) {
+      return 'database-config';
+    }
+
+    if (node.type === 'container') {
+      return 'container-config';
+    }
+
+    if (node.type === 'entry') {
+      return 'entry-config';
+    }
+
+    if (node.type === 'devbox') {
+      return 'devbox-config';
+    }
+
+    return '';
+  }
+
+  function pushNodeConfigMessage(node) {
+    const ui = configUiForNode(node);
+    if (!ui) {
+      state.activeConfigMessageId = null;
+      return null;
+    }
+
+    const lastMessage = state.messages[state.messages.length - 1];
+    if (
+      lastMessage &&
+      lastMessage.kind === 'agui' &&
+      lastMessage.ui === ui &&
+      lastMessage.payload &&
+      lastMessage.payload.nodeId === node.id
+    ) {
+      state.activeConfigMessageId = lastMessage.id;
+      return lastMessage;
+    }
+
+    const message = {
+      id: createId('msg'),
+      role: 'assistant',
+      kind: 'agui',
+      ui,
+      payload: {
+        nodeId: node.id,
+      },
+    };
+    state.messages.push(message);
+    state.activeConfigMessageId = message.id;
     return message;
   }
 
@@ -2560,6 +2748,7 @@
           closeContainerContext();
           closeDevboxContext();
           openEntryContext(node.id);
+          pushNodeConfigMessage(node);
           openDomainTarget(domainTarget.dataset.nodeDomain || '');
           renderAll();
           return;
@@ -2592,7 +2781,9 @@
           closeEntryContext();
           closeContainerContext();
           closeDevboxContext();
+          state.activeConfigMessageId = null;
         }
+        pushNodeConfigMessage(node);
         renderAll();
       });
 
@@ -3814,6 +4005,98 @@
       }
     });
 
+    dom.chatLog.addEventListener('input', (event) => {
+      if (updateDatabaseConfigDraftFromChat(event.target)) {
+        return;
+      }
+
+      if (updateContainerConfigDraftFromChat(event.target)) {
+        return;
+      }
+
+      if (updateEntryConfigDraftFromChat(event.target)) {
+        return;
+      }
+
+      updateDevboxConfigDraftFromChat(event.target);
+    });
+
+    dom.chatLog.addEventListener('change', (event) => {
+      if (updateDatabaseConfigDraftFromChat(event.target)) {
+        renderChat();
+        return;
+      }
+
+      if (updateContainerConfigDraftFromChat(event.target)) {
+        renderChat();
+        return;
+      }
+
+      if (updateEntryConfigDraftFromChat(event.target)) {
+        renderChat();
+        return;
+      }
+
+      if (updateDevboxConfigDraftFromChat(event.target)) {
+        renderChat();
+      }
+    });
+
+    dom.chatLog.addEventListener('click', (event) => {
+      const entryOpenButton = event.target.closest('[data-entry-config-action="open-domain"]');
+      if (entryOpenButton) {
+        openDomainTarget(entryOpenButton.dataset.entryDomain || '');
+        return;
+      }
+
+      if (!isActiveConfigMessageTarget(event.target)) {
+        return;
+      }
+
+      const dbButton = event.target.closest('[data-db-config-action]');
+      if (dbButton && state.databaseView && dbButton.dataset.dbConfigAction === 'save') {
+        saveDatabaseConfig();
+        return;
+      }
+
+      const containerButton = event.target.closest('[data-container-config-action]');
+      if (containerButton && state.containerView && containerButton.dataset.containerConfigAction === 'save') {
+        saveContainerConfig();
+        return;
+      }
+
+      const devboxButton = event.target.closest('[data-devbox-config-action]');
+      if (devboxButton && state.devboxView && devboxButton.dataset.devboxConfigAction === 'save') {
+        saveDevboxConfig();
+        return;
+      }
+
+      const entryButton = event.target.closest('[data-entry-config-action]');
+      if (entryButton && state.entryView) {
+        if (entryButton.dataset.entryConfigAction === 'view-cname') {
+          showEntryCnameInfo();
+          renderChat();
+          return;
+        }
+
+        if (entryButton.dataset.entryConfigAction === 'save') {
+          saveEntryConfig();
+          return;
+        }
+
+        if (entryButton.dataset.entryConfigAction === 'add-whitelist') {
+          addEntryWhitelistItem();
+          renderChat();
+          return;
+        }
+
+        if (entryButton.dataset.entryConfigAction === 'remove-whitelist') {
+          removeEntryWhitelistItem(Number(entryButton.dataset.entryWhitelistIndex));
+          renderChat();
+        }
+      }
+    });
+
     if (dom.canvasWorkspace) {
       dom.canvasWorkspace.addEventListener('click', (event) => {
         const projectButton = event.target.closest('[data-project-action]');
@@ -3844,8 +4127,11 @@
               openEntryContext(node.id);
             } else if (node.type === 'devbox') {
               openDevboxContext(node.id);
+            } else {
+              state.activeConfigMessageId = null;
             }
 
+            pushNodeConfigMessage(node);
             renderAll();
             return;
           }
@@ -5520,7 +5806,599 @@
     }, 0);
   }
 
+  function isActiveConfigMessage(message, nodeId) {
+    return (
+      Boolean(message) &&
+      state.activeConfigMessageId === message.id &&
+      Boolean(nodeId) &&
+      state.selectedNodeId === nodeId
+    );
+  }
+
+  function renderMissingConfigMessage(title) {
+    return `
+      <div class="chat-message assistant">
+        <div class="chat-avatar">AI</div>
+        <div class="chat-bubble">${escapeHtml(title)}对象已不存在。</div>
+      </div>
+    `;
+  }
+
+  function renderDatabaseConfigMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!supportsDatabaseWorkspace(node)) {
+      return renderMissingConfigMessage('数据库配置');
+    }
+
+    syncDatabaseNode(node);
+    const activeContext = isActiveConfigMessage(message, node.id) ? activeDatabaseContext() : null;
+    const databases = (node.databaseWorkspace && node.databaseWorkspace.databases) || [];
+    const database = (activeContext && activeContext.database) || databases[0];
+    if (!database) {
+      return renderMissingConfigMessage('数据库配置');
+    }
+
+    const draft = activeContext ? activeContext.view.configDraft || { ...node.databaseConfig } : { ...node.databaseConfig };
+    const changed = activeContext ? databaseConfigChanged(node, draft) : false;
+    const statusClass = activeContext
+      ? activeContext.view.error
+        ? 'error'
+        : changed
+        ? 'pending'
+        : activeContext.view.saveState === 'done'
+        ? 'saved'
+        : ''
+      : 'saved';
+    const statusText = activeContext
+      ? activeContext.view.error
+        ? activeContext.view.error
+        : changed
+        ? '配置有未保存修改'
+        : activeContext.view.saveState === 'done'
+        ? '配置已同步到数据库工作区'
+        : '当前配置已生效'
+      : '数据库当前保存配置';
+    const disabledAttr = activeContext ? '' : 'disabled';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">AI</div>
+        <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
+          <div class="db-config-header">
+            <div>
+              <strong>${escapeHtml(node.title)}</strong>
+              <span>${escapeHtml(database.name)} / ${escapeHtml(node.databaseConfig.flavor)} ${escapeHtml(node.databaseConfig.version)}</span>
+            </div>
+            <div class="db-chip">${escapeHtml(draft.instanceSpec || node.databaseConfig.instanceSpec)}</div>
+          </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">扩缩容与数据库规格。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Instance</span>
+                <select class="agui-select" data-db-config-field="instanceSpec" ${disabledAttr}>
+                  ${selectOptions(databaseSpecOptions(node.databaseConfig.flavor), draft.instanceSpec || node.databaseConfig.instanceSpec)}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Replicas</span>
+                <select class="agui-select" data-db-config-field="replicas" ${disabledAttr}>
+                  ${selectOptions(['1', '2', '3', '5'], String(draft.replicas || node.databaseConfig.replicas))}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>CPU</span>
+                <select class="agui-select" data-db-config-field="cpu" ${disabledAttr}>
+                  ${selectOptions(['1', '2', '4', '8', '16'], String(draft.cpu || node.databaseConfig.cpu))}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Memory</span>
+                <select class="agui-select" data-db-config-field="memory" ${disabledAttr}>
+                  ${selectOptions(['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'], String(draft.memory || node.databaseConfig.memory))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">存储与备份策略。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Storage</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(String(draft.storage || node.databaseConfig.storage))}"
+                  data-db-config-field="storage"
+                  ${disabledAttr}
+                />
+              </label>
+              <label class="db-config-label">
+                <span>Backup</span>
+                <select class="agui-select" data-db-config-field="backupPolicy" ${disabledAttr}>
+                  ${selectOptions(['PITR / Hourly', 'Snapshot / 6h', 'Daily Snapshot'], String(draft.backupPolicy || node.databaseConfig.backupPolicy))}
+                </select>
+              </label>
+            </div>
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+            ${activeContext ? '<button type="button" class="db-primary-button" data-db-config-action="save">保存配置</button>' : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderContainerConfigMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      return renderMissingConfigMessage('容器配置');
+    }
+
+    syncContainerNode(node);
+    const activeContext = isActiveConfigMessage(message, node.id) ? activeContainerContext() : null;
+    const container = node.containerConfig || {};
+    const draft = {
+      ...container,
+      ...(activeContext ? activeContext.view.configDraft || {} : {}),
+      image: String((((activeContext && activeContext.view.configDraft) || {}).image || container.image) || '').trim(),
+      replicas: String((((activeContext && activeContext.view.configDraft) || {}).replicas || container.replicas) || '').trim(),
+      cpu: String((((activeContext && activeContext.view.configDraft) || {}).cpu || container.cpu) || '').trim(),
+      memory: String((((activeContext && activeContext.view.configDraft) || {}).memory || container.memory) || '').trim(),
+      envVars: String((((activeContext && activeContext.view.configDraft) || {}).envVars || container.envVars) || '').trim(),
+      startArgs: String((((activeContext && activeContext.view.configDraft) || {}).startArgs || container.startArgs) || '').trim(),
+      mountDisk:
+        typeof (((activeContext && activeContext.view.configDraft) || {}).mountDisk) === 'boolean'
+          ? activeContext.view.configDraft.mountDisk
+          : Boolean(container.mountDisk),
+      diskSize: String((((activeContext && activeContext.view.configDraft) || {}).diskSize || container.diskSize) || '').trim(),
+      diskUsed: String((((activeContext && activeContext.view.configDraft) || {}).diskUsed || container.diskUsed) || '').trim(),
+      mountPath: String((((activeContext && activeContext.view.configDraft) || {}).mountPath || container.mountPath) || '').trim(),
+    };
+    const changed = activeContext ? containerConfigChanged(node, draft) : false;
+    const statusClass = activeContext
+      ? activeContext.view.error
+        ? 'error'
+        : changed
+        ? 'pending'
+        : activeContext.view.saveState === 'done'
+        ? 'saved'
+        : ''
+      : 'saved';
+    const statusText = activeContext
+      ? activeContext.view.error
+        ? activeContext.view.error
+        : activeContext.view.info
+        ? activeContext.view.info
+        : changed
+        ? '容器配置有未保存修改'
+        : '当前配置已生效'
+      : '容器当前保存配置';
+    const disabledAttr = activeContext ? '' : 'disabled';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">AI</div>
+        <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
+          <div class="db-config-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node))}</strong>
+              <span>${escapeHtml(draft.image)}</span>
+            </div>
+            <div class="db-chip">${escapeHtml(draft.replicas)} 副本</div>
+          </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">副本数与容器资源。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Replicas</span>
+                <select class="agui-select" data-container-config-field="replicas" ${disabledAttr}>
+                  ${selectOptions(['1', '2', '3', '5'], draft.replicas || '1')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>CPU</span>
+                <select class="agui-select" data-container-config-field="cpu" ${disabledAttr}>
+                  ${selectOptions(['0.5', '1', '2', '4', '8'], draft.cpu || '1')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Memory</span>
+                <select class="agui-select" data-container-config-field="memory" ${disabledAttr}>
+                  ${selectOptions(['512Mi', '1Gi', '2Gi', '4Gi', '8Gi', '16Gi'], draft.memory || '1Gi')}
+                </select>
+              </label>
+            </div>
+            <div class="container-runtime-copy">
+              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu), draft.cpu, { kind: 'cpu' })}
+              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory), draft.memory)}
+              ${
+                draft.mountDisk
+                  ? renderContainerMeter(
+                      '磁盘',
+                      draft.diskUsed || estimateUsedDisk(draft.diskSize || '20Gi'),
+                      draft.diskSize || '20Gi',
+                      { kind: 'capacity', icon: 'storage' },
+                    )
+                  : ''
+              }
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">镜像与启动参数。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>Image</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.image)}" data-container-config-field="image" ${disabledAttr} />
+              </label>
+              <label class="db-config-label">
+                <span>Start Args</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.startArgs)}" data-container-config-field="startArgs" ${disabledAttr} />
+              </label>
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">环境变量。</div>
+            <textarea class="agui-textarea" data-container-config-field="envVars" placeholder="KEY=value&#10;API_KEY=***" ${disabledAttr}>${escapeHtml(draft.envVars)}</textarea>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">持久化磁盘。</div>
+            <label class="agui-checkline">
+              <input type="checkbox" ${draft.mountDisk ? 'checked' : ''} data-container-config-field="mountDisk" ${disabledAttr} />
+              <span>有状态容器，挂载磁盘</span>
+            </label>
+            ${
+              draft.mountDisk
+                ? `<div class="db-config-grid">
+                    <label class="db-config-label">
+                      <span>Disk</span>
+                      <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize)}" data-container-config-field="diskSize" ${disabledAttr} />
+                    </label>
+                    <label class="db-config-label">
+                      <span>Used</span>
+                      <input class="agui-input" type="text" value="${escapeHtml(draft.diskUsed || estimateUsedDisk(draft.diskSize || '20Gi'))}" data-container-config-field="diskUsed" ${disabledAttr} />
+                    </label>
+                    <label class="db-config-label">
+                      <span>Mount Path</span>
+                      <input class="agui-input" type="text" value="${escapeHtml(draft.mountPath)}" data-container-config-field="mountPath" ${disabledAttr} />
+                    </label>
+                  </div>`
+                : ''
+            }
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+            ${activeContext ? '<button type="button" class="db-primary-button" data-container-config-action="save">保存配置</button>' : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderEntryConfigMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'entry') {
+      return renderMissingConfigMessage('域名配置');
+    }
+
+    syncEntryNode(node);
+    const activeContext = isActiveConfigMessage(message, node.id) ? activeEntryContext() : null;
+    const entry = node.entryConfig || {};
+    const draft = {
+      ...entry,
+      ...(activeContext ? activeContext.view.configDraft || {} : {}),
+      whitelist: normalizeStringList(((activeContext && activeContext.view.configDraft) || {}).whitelist || entry.whitelist),
+    };
+    const changed = activeContext ? entryConfigChanged(node, draft) : false;
+    const statusClass = activeContext
+      ? activeContext.view.error
+        ? 'error'
+        : changed
+        ? 'pending'
+        : activeContext.view.saveState === 'done'
+        ? 'saved'
+        : ''
+      : 'saved';
+    const statusText = activeContext
+      ? activeContext.view.error
+        ? activeContext.view.error
+        : activeContext.view.info
+        ? activeContext.view.info
+        : changed
+        ? '域名配置有未保存修改'
+        : activeContext.view.saveState === 'done'
+        ? '域名配置已更新'
+        : '当前入口可访问'
+      : '入口当前保存配置';
+    const disabledAttr = activeContext ? '' : 'disabled';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">AI</div>
+        <div class="entry-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
+          <div class="entry-config-header">
+            <div>
+              <strong>${escapeHtml(draft.externalDomain || node.title)}</strong>
+              <span>CNAME / Whitelist</span>
+            </div>
+            <div class="db-chip">Accessible</div>
+          </div>
+
+          <section class="entry-config-section">
+            <div class="db-config-copy">点击域名可直接打开。</div>
+            <div class="entry-domain-list">
+              <button
+                type="button"
+                class="entry-domain-button"
+                data-entry-config-action="open-domain"
+                data-entry-domain="${escapeHtml(draft.externalDomain)}"
+              >
+                <span>外网域名</span>
+                <strong class="entry-domain-main">
+                  <span>${escapeHtml(draft.externalDomain)}</span>
+                  <span
+                    class="node-domain-health ${draft.externalStatus === 'issue' ? 'issue' : 'healthy'}"
+                    title="${draft.externalStatus === 'issue' ? '不正常' : '健康'}"
+                  ></span>
+                </strong>
+              </button>
+              <button
+                type="button"
+                class="entry-domain-button"
+                data-entry-config-action="open-domain"
+                data-entry-domain="${escapeHtml(draft.internalDomain)}"
+              >
+                <span>内网域名</span>
+                <strong class="entry-domain-main">
+                  <span>${escapeHtml(draft.internalDomain)}</span>
+                  <span
+                    class="node-domain-health ${draft.internalStatus === 'issue' ? 'issue' : 'healthy'}"
+                    title="${draft.internalStatus === 'issue' ? '不正常' : '健康'}"
+                  ></span>
+                </strong>
+              </button>
+            </div>
+          </section>
+
+          <section class="entry-config-section">
+            <div class="db-config-copy">CNAME 配置。</div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>CNAME Host</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.cnameHost || '')}"
+                  data-entry-config-field="cnameHost"
+                  ${disabledAttr}
+                />
+              </label>
+              <label class="db-config-label">
+                <span>CNAME Target</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.cnameTarget || '')}"
+                  data-entry-config-field="cnameTarget"
+                  ${disabledAttr}
+                />
+              </label>
+            </div>
+            ${
+              activeContext
+                ? `<div class="entry-config-actions">
+                    <button type="button" class="db-ghost-button" data-entry-config-action="view-cname">查看 CNAME</button>
+                    <button type="button" class="db-primary-button" data-entry-config-action="save">更新 CNAME</button>
+                  </div>`
+                : ''
+            }
+          </section>
+
+          <section class="entry-config-section">
+            <div class="db-config-copy">IP公网地址列表。</div>
+            <div class="entry-whitelist-list">
+              ${
+                draft.whitelist.length
+                  ? draft.whitelist
+                      .map(
+                        (item, index) => `
+                          <div class="entry-whitelist-item">
+                            <span>${escapeHtml(item)}</span>
+                            ${
+                              activeContext
+                                ? `<button
+                                    type="button"
+                                    class="entry-whitelist-remove"
+                                    data-entry-config-action="remove-whitelist"
+                                    data-entry-whitelist-index="${index}"
+                                  >
+                                    删除
+                                  </button>`
+                                : ''
+                            }
+                          </div>
+                        `,
+                      )
+                      .join('')
+                  : '<div class="agui-empty">当前没有白名单条目。</div>'
+              }
+            </div>
+            ${
+              activeContext
+                ? `<div class="entry-whitelist-editor">
+                    <input
+                      class="agui-input"
+                      type="text"
+                      value="${escapeHtml(activeContext.view.whitelistDraft || '')}"
+                      placeholder="203.0.113.24"
+                      data-entry-config-field="whitelistDraft"
+                    />
+                    <button type="button" class="db-primary-button" data-entry-config-action="add-whitelist">添加</button>
+                  </div>`
+                : ''
+            }
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDevboxConfigMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'devbox') {
+      return renderMissingConfigMessage('开发环境配置');
+    }
+
+    syncDevboxNode(node);
+    const activeContext = isActiveConfigMessage(message, node.id) ? activeDevboxContext() : null;
+    const devbox = node.devboxConfig || {};
+    const draft = {
+      ...devbox,
+      ...(activeContext ? activeContext.view.configDraft || {} : {}),
+      cpu: String((((activeContext && activeContext.view.configDraft) || {}).cpu || devbox.cpu) || '').trim(),
+      memory: String((((activeContext && activeContext.view.configDraft) || {}).memory || devbox.memory) || '').trim(),
+      diskSize: String((((activeContext && activeContext.view.configDraft) || {}).diskSize || devbox.diskSize) || '').trim(),
+      diskUsed: String((((activeContext && activeContext.view.configDraft) || {}).diskUsed || devbox.diskUsed) || '').trim(),
+      startCommand: String((((activeContext && activeContext.view.configDraft) || {}).startCommand || devbox.startCommand) || '').trim(),
+      port: String((((activeContext && activeContext.view.configDraft) || {}).port || devbox.port) || '').trim(),
+    };
+    const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
+    const stack = devboxTemplateStack(template);
+    const changed = activeContext ? devboxConfigChanged(node, draft) : false;
+    const statusClass = activeContext
+      ? activeContext.view.error
+        ? 'error'
+        : changed
+        ? 'pending'
+        : activeContext.view.saveState === 'done'
+        ? 'saved'
+        : ''
+      : 'saved';
+    const statusText = activeContext
+      ? activeContext.view.error
+        ? activeContext.view.error
+        : activeContext.view.info
+        ? activeContext.view.info
+        : changed
+        ? '开发环境配置有未保存修改'
+        : '当前配置已生效'
+      : '开发环境当前保存配置';
+    const disabledAttr = activeContext ? '' : 'disabled';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">AI</div>
+        <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
+          <div class="db-config-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
+              <span>开发环境</span>
+            </div>
+            <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
+          </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">当前工作区模板。</div>
+            <div class="devbox-stack-row">
+              ${stack.map((item) => renderTemplateBadge(item, 'devbox-template-badge')).join('')}
+            </div>
+            <div class="devbox-meta-row">
+              ${draft.version ? `<span class="devbox-meta-chip">v${escapeHtml(draft.version)}</span>` : ''}
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">资源规格。</div>
+            <div class="container-runtime-copy">
+              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu || '4'), draft.cpu || '4', { kind: 'cpu' })}
+              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory || '8Gi'), draft.memory || '8Gi')}
+              ${renderContainerMeter('磁盘', draft.diskUsed || estimateUsedDisk(draft.diskSize || '50Gi'), draft.diskSize || '50Gi', {
+                kind: 'capacity',
+                icon: 'storage',
+              })}
+            </div>
+            <div class="db-config-grid">
+              <label class="db-config-label">
+                <span>CPU</span>
+                <select class="agui-select" data-devbox-config-field="cpu" ${disabledAttr}>
+                  ${selectOptions(['2', '4', '8', '16'], draft.cpu || '4')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Memory</span>
+                <select class="agui-select" data-devbox-config-field="memory" ${disabledAttr}>
+                  ${selectOptions(['4Gi', '8Gi', '16Gi', '32Gi'], draft.memory || '8Gi')}
+                </select>
+              </label>
+              <label class="db-config-label">
+                <span>Disk</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize || '50Gi')}" data-devbox-config-field="diskSize" ${disabledAttr} />
+              </label>
+            </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">启动命令。</div>
+            <input class="agui-input" type="text" value="${escapeHtml(draft.startCommand || '')}" data-devbox-config-field="startCommand" ${disabledAttr} />
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">可直接通过本地 IDE 连接当前开发环境。</div>
+            <div class="devbox-ide-grid">
+              ${DEVBOX_IDE_CLIENTS.map(
+                (ide) => `
+                  <div class="devbox-ide-item">
+                    <span class="devbox-ide-icon" style="--ide-accent:${ide.accent};">${escapeHtml(ide.mark)}</span>
+                    <div class="devbox-ide-copy">
+                      <strong>${escapeHtml(ide.name)}</strong>
+                      <span>${escapeHtml(ide.note)}</span>
+                    </div>
+                  </div>
+                `,
+              ).join('')}
+            </div>
+            <div class="devbox-connect-hint">打开本地 IDE 后，可使用 Remote SSH、Gateway 或同类远程方式连接这个工作区。</div>
+          </section>
+
+          <div class="db-config-footer">
+            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+            ${activeContext ? '<button type="button" class="db-primary-button" data-devbox-config-action="save">保存配置</button>' : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderAguiMessage(message) {
+    if (message.ui === 'database-config') {
+      return renderDatabaseConfigMessage(message);
+    }
+
+    if (message.ui === 'container-config') {
+      return renderContainerConfigMessage(message);
+    }
+
+    if (message.ui === 'entry-config') {
+      return renderEntryConfigMessage(message);
+    }
+
+    if (message.ui === 'devbox-config') {
+      return renderDevboxConfigMessage(message);
+    }
+
     if (message.ui === 'project-create') {
       return renderProjectCreateCard(message);
     }

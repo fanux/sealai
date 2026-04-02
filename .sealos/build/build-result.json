@@ -3,11 +3,11 @@
   "registry": "ghcr",
   "build": {
     "image_name": "sealai",
-    "started_at": "2026-04-02T02:46:11.829Z"
+    "started_at": "2026-04-02T08:44:29.016Z"
   },
   "push": {
-    "remote_image": "ghcr.io/fanux/sealai:20260402-104611",
-    "pushed_at": "2026-04-02T02:46:17.918Z"
+    "remote_image": "ghcr.io/fanux/sealai:20260402-164429",
+    "pushed_at": "2026-04-02T08:44:35.820Z"
   },
-  "finished_at": "2026-04-02T02:46:17.918Z"
+  "finished_at": "2026-04-02T08:44:35.820Z"
 }
