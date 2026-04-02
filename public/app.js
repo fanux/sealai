@@ -289,6 +289,8 @@
     projectListOpen: false,
     suppressClickNodeId: null,
     activeConfigMessageId: null,
+    linkingPending: null,
+    linking: null,
   };
 
   let rafHandle = 0;
@@ -296,6 +298,17 @@
   const DEFAULT_DEPLOY_IMAGE = 'agpts';
   const DEFAULT_DEPLOY_PORT = '80';
   const AUTO_DOMAIN_SENTINEL = '自动生成';
+  const CONTAINER_REPLICA_OPTIONS = ['1', '2', '3', '4', '5', '6', '8', '10'];
+  const CONTAINER_CPU_OPTIONS = ['0.5', '1', '2', '4', '8', '16'];
+  const CONTAINER_MEMORY_OPTIONS = ['512Mi', '1Gi', '2Gi', '4Gi', '8Gi', '16Gi', '32Gi'];
+  const CONTAINER_DISK_OPTIONS = ['10Gi', '20Gi', '50Gi', '100Gi', '200Gi', '500Gi'];
+  const DATABASE_REPLICA_OPTIONS = ['1', '2', '3', '5'];
+  const DATABASE_CPU_OPTIONS = ['1', '2', '4', '8', '16'];
+  const DATABASE_MEMORY_OPTIONS = ['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'];
+  const DATABASE_STORAGE_OPTIONS = ['20Gi', '50Gi', '100Gi', '200Gi', '500Gi'];
+  const DEVBOX_CPU_OPTIONS = ['2', '4', '8', '16'];
+  const DEVBOX_MEMORY_OPTIONS = ['4Gi', '8Gi', '16Gi', '32Gi'];
+  const DEVBOX_DISK_OPTIONS = ['20Gi', '50Gi', '100Gi', '200Gi'];
 
   function createId(prefix) {
     return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -493,8 +506,358 @@
 
   function inferContainerReplicas(node, fallback) {
     const text = [node && node.subtitle, ...(node && node.tags ? node.tags : [])].join(' ');
-    const match = String(text).match(/(\d+)\s*副本/);
-    return match ? match[1] : String(fallback || '1');
+    const match = String(text).match(/(\d+)(?:\s*[-~]\s*(\d+))?\s*副本/);
+    if (!match) {
+      return String(fallback || '1');
+    }
+
+    return match[2] ? `${match[1]}-${match[2]}` : match[1];
+  }
+
+  function parseContainerReplicaRange(value, fallback = '1') {
+    const source = String(value || fallback || '1').trim();
+    const match = source.match(/(\d+)(?:\s*[-~]\s*(\d+))?/);
+    const first = match ? Number(match[1]) : Number(fallback || '1');
+    const second = match && match[2] ? Number(match[2]) : first;
+    const minValue = String(Math.max(1, Math.min(first, second)));
+    const maxValue = String(Math.max(1, Math.max(first, second)));
+    const scalingMode = minValue !== maxValue ? 'elastic' : 'fixed';
+
+    return {
+      scalingMode,
+      minReplicas: minValue,
+      maxReplicas: maxValue,
+      replicas: scalingMode === 'elastic' ? `${minValue}-${maxValue}` : minValue,
+    };
+  }
+
+  function numericRankForOption(value, kind = 'number') {
+    if (kind === 'cpu') {
+      return parseCpuValue(value);
+    }
+
+    if (kind === 'capacity') {
+      return (parseCapacityValue(value) || {}).baseMi || 0;
+    }
+
+    return Number(String(value || '').trim()) || 0;
+  }
+
+  function closestOptionIndex(options, value, kind = 'number') {
+    const normalized = String(value || '').trim();
+    const exactIndex = options.findIndex((option) => String(option) === normalized);
+    if (exactIndex >= 0) {
+      return exactIndex;
+    }
+
+    const target = numericRankForOption(normalized, kind);
+    let bestIndex = 0;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    options.forEach((option, index) => {
+      const distance = Math.abs(numericRankForOption(option, kind) - target);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    return bestIndex;
+  }
+
+  function sliderOptionValue(options, index) {
+    const safeIndex = clamp(Number(index) || 0, 0, Math.max(0, options.length - 1));
+    return options[safeIndex] || options[0] || '';
+  }
+
+  function containerSliderIndex(field, value) {
+    if (field === 'cpu') {
+      return closestOptionIndex(CONTAINER_CPU_OPTIONS, value, 'cpu');
+    }
+
+    if (field === 'memory') {
+      return closestOptionIndex(CONTAINER_MEMORY_OPTIONS, value, 'capacity');
+    }
+
+    if (field === 'diskSize') {
+      return closestOptionIndex(CONTAINER_DISK_OPTIONS, value, 'capacity');
+    }
+
+    return closestOptionIndex(CONTAINER_REPLICA_OPTIONS, value, 'number');
+  }
+
+  function containerSliderValue(field, index) {
+    if (field === 'cpu') {
+      return sliderOptionValue(CONTAINER_CPU_OPTIONS, index);
+    }
+
+    if (field === 'memory') {
+      return sliderOptionValue(CONTAINER_MEMORY_OPTIONS, index);
+    }
+
+    if (field === 'diskSize') {
+      return sliderOptionValue(CONTAINER_DISK_OPTIONS, index);
+    }
+
+    return sliderOptionValue(CONTAINER_REPLICA_OPTIONS, index);
+  }
+
+  function devboxSliderIndex(field, value) {
+    if (field === 'cpu') {
+      return closestOptionIndex(DEVBOX_CPU_OPTIONS, value, 'cpu');
+    }
+
+    if (field === 'memory') {
+      return closestOptionIndex(DEVBOX_MEMORY_OPTIONS, value, 'capacity');
+    }
+
+    return closestOptionIndex(DEVBOX_DISK_OPTIONS, value, 'capacity');
+  }
+
+  function devboxSliderValue(field, index) {
+    if (field === 'cpu') {
+      return sliderOptionValue(DEVBOX_CPU_OPTIONS, index);
+    }
+
+    if (field === 'memory') {
+      return sliderOptionValue(DEVBOX_MEMORY_OPTIONS, index);
+    }
+
+    return sliderOptionValue(DEVBOX_DISK_OPTIONS, index);
+  }
+
+  function databaseSliderIndex(field, value) {
+    if (field === 'cpu') {
+      return closestOptionIndex(DATABASE_CPU_OPTIONS, value, 'cpu');
+    }
+
+    if (field === 'memory') {
+      return closestOptionIndex(DATABASE_MEMORY_OPTIONS, value, 'capacity');
+    }
+
+    if (field === 'storage') {
+      return closestOptionIndex(DATABASE_STORAGE_OPTIONS, value, 'capacity');
+    }
+
+    return closestOptionIndex(DATABASE_REPLICA_OPTIONS, value, 'number');
+  }
+
+  function databaseSliderValue(field, index) {
+    if (field === 'cpu') {
+      return sliderOptionValue(DATABASE_CPU_OPTIONS, index);
+    }
+
+    if (field === 'memory') {
+      return sliderOptionValue(DATABASE_MEMORY_OPTIONS, index);
+    }
+
+    if (field === 'storage') {
+      return sliderOptionValue(DATABASE_STORAGE_OPTIONS, index);
+    }
+
+    return sliderOptionValue(DATABASE_REPLICA_OPTIONS, index);
+  }
+
+  function resolveDatabaseInstanceSpec(flavor, cpu, memory, fallback) {
+    const options = databaseSpecOptions(flavor);
+    const targetCpu = numericRankForOption(cpu, 'cpu');
+    const targetMemory = numericRankForOption(memory, 'capacity');
+    let bestOption = options[0] || fallback || '';
+    let bestScore = Number.POSITIVE_INFINITY;
+
+    options.forEach((option) => {
+      const profile = databaseSpecProfile(option);
+      const score =
+        Math.abs(numericRankForOption(profile.cpu, 'cpu') - targetCpu) * 10 +
+        Math.abs(numericRankForOption(profile.memory, 'capacity') - targetMemory);
+      if (score < bestScore) {
+        bestScore = score;
+        bestOption = option;
+      }
+    });
+
+    return bestOption || fallback || '';
+  }
+
+  function normalizeContainerConfigFiles(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+
+    return value.map((item) => {
+      const path = String((item && item.path) || '').trim();
+      const content = String((item && item.content) || '');
+      const complete = Boolean(path && content);
+      const saved = Boolean(item && item.saved && complete);
+
+      return {
+        path,
+        content,
+        saved,
+        collapsed: Boolean(item && item.collapsed && saved),
+      };
+    });
+  }
+
+  function normalizeContainerConfigShape(config = {}) {
+    const replicaState = parseContainerReplicaRange(
+      config.replicas || `${config.minReplicas || ''}-${config.maxReplicas || ''}`,
+      '1',
+    );
+    const scalingMode = config.scalingMode === 'elastic' || config.scalingMode === 'fixed' ? config.scalingMode : replicaState.scalingMode;
+    const minReplicas = String(config.minReplicas || replicaState.minReplicas || '1').trim() || '1';
+    const fallbackMax = scalingMode === 'elastic' ? replicaState.maxReplicas || minReplicas : minReplicas;
+    const rawMaxReplicas = String(config.maxReplicas || fallbackMax || minReplicas).trim() || minReplicas;
+    const minValue = Math.max(1, Number(minReplicas) || 1);
+    const maxValue = Math.max(minValue, Number(rawMaxReplicas) || minValue);
+    const mountDisk = Boolean(config.mountDisk || config.stateful);
+    const diskSize = String(config.diskSize || (mountDisk ? '20Gi' : '')).trim();
+    const startArgs = String(config.startArgs || 'start.sh').trim() || 'start.sh';
+    const mountPath = String(config.mountPath || (mountDisk ? '/data' : '')).trim();
+
+    return {
+      ...config,
+      scalingMode,
+      minReplicas: String(minValue),
+      maxReplicas: String(maxValue),
+      replicas: scalingMode === 'elastic' && maxValue > minValue ? `${minValue}-${maxValue}` : String(minValue),
+      startArgs,
+      mountDisk,
+      stateful: mountDisk,
+      diskSize,
+      diskUsed: String(config.diskUsed || (mountDisk ? estimateUsedDisk(diskSize || '20Gi') : '')).trim(),
+      mountPath,
+      configFiles: normalizeContainerConfigFiles(config.configFiles),
+    };
+  }
+
+  function ensureElasticReplicaRange(config = {}) {
+    const nextConfig = { ...config };
+    if (nextConfig.scalingMode !== 'elastic') {
+      return nextConfig;
+    }
+
+    let minIndex = containerSliderIndex('replicas', nextConfig.minReplicas || nextConfig.replicas || '1');
+    let maxIndex = containerSliderIndex('replicas', nextConfig.maxReplicas || nextConfig.replicas || '1');
+
+    if (maxIndex <= minIndex) {
+      if (minIndex < CONTAINER_REPLICA_OPTIONS.length - 1) {
+        maxIndex = minIndex + 1;
+      } else if (minIndex > 0) {
+        minIndex = minIndex - 1;
+        maxIndex = minIndex + 1;
+      }
+    }
+
+    nextConfig.minReplicas = containerSliderValue('replicas', minIndex);
+    nextConfig.maxReplicas = containerSliderValue('replicas', maxIndex);
+    nextConfig.replicas = `${nextConfig.minReplicas}-${nextConfig.maxReplicas}`;
+    return nextConfig;
+  }
+
+  function containerReplicaLabel(config = {}) {
+    const normalized = normalizeContainerConfigShape(config);
+    return normalized.scalingMode === 'elastic' && Number(normalized.maxReplicas) > Number(normalized.minReplicas)
+      ? `${normalized.minReplicas}-${normalized.maxReplicas} 副本`
+      : `${normalized.replicas} 副本`;
+  }
+
+  function renderSliderField({
+    label,
+    field,
+    valueText,
+    valueIndex,
+    maxIndex,
+    minLabel,
+    maxLabel,
+    disabled,
+    dataFieldAttr = 'data-container-config-field',
+  }) {
+    return `
+      <label class="resource-slider-field">
+        <div class="resource-slider-head">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(valueText)}</strong>
+        </div>
+        <input
+          class="resource-slider-input"
+          type="range"
+          min="0"
+          max="${maxIndex}"
+          step="1"
+          value="${valueIndex}"
+          ${dataFieldAttr}="${field}"
+          ${disabled ? 'disabled' : ''}
+        />
+        <div class="resource-slider-scale">
+          <span>${escapeHtml(minLabel)}</span>
+          <span>${escapeHtml(maxLabel)}</span>
+        </div>
+      </label>
+    `;
+  }
+
+  function renderReplicaRangeField(config = {}, disabled = false) {
+    const normalized = normalizeContainerConfigShape(ensureElasticReplicaRange(config));
+    const maxIndex = Math.max(0, CONTAINER_REPLICA_OPTIONS.length - 1);
+    const minIndex = containerSliderIndex(
+      'replicas',
+      normalized.scalingMode === 'elastic' ? normalized.minReplicas : normalized.replicas,
+    );
+    const endIndex =
+      normalized.scalingMode === 'elastic'
+        ? containerSliderIndex('replicas', normalized.maxReplicas)
+        : minIndex;
+    const startPercent = maxIndex ? (Math.min(minIndex, endIndex) / maxIndex) * 100 : 0;
+    const endPercent = maxIndex ? (Math.max(minIndex, endIndex) / maxIndex) * 100 : 0;
+    const fillLeft = normalized.scalingMode === 'elastic' ? startPercent : 0;
+    const fillWidth =
+      normalized.scalingMode === 'elastic' ? Math.max(0, endPercent - startPercent) : Math.max(0, endPercent);
+    const valueText =
+      normalized.scalingMode === 'elastic'
+        ? `${normalized.minReplicas} - ${normalized.maxReplicas} 副本`
+        : `${normalized.replicas} 副本`;
+
+    return `
+      <div class="replica-range-field">
+        <div class="resource-slider-head">
+          <span>${normalized.scalingMode === 'elastic' ? '副本范围' : '副本数'}</span>
+          <strong>${escapeHtml(valueText)}</strong>
+        </div>
+        <div class="replica-range-shell">
+          <div class="replica-range-track"></div>
+          <div class="replica-range-fill" style="left:${fillLeft}%; width:${fillWidth}%;"></div>
+          <input
+            class="replica-range-input replica-range-input-min"
+            type="range"
+            min="0"
+            max="${maxIndex}"
+            step="1"
+            value="${minIndex}"
+            data-container-config-field="${normalized.scalingMode === 'elastic' ? 'minReplicas' : 'replicas'}"
+            ${disabled ? 'disabled' : ''}
+          />
+          ${
+            normalized.scalingMode === 'elastic'
+              ? `<input
+                  class="replica-range-input replica-range-input-max"
+                  type="range"
+                  min="0"
+                  max="${maxIndex}"
+                  step="1"
+                  value="${endIndex}"
+                  data-container-config-field="maxReplicas"
+                  ${disabled ? 'disabled' : ''}
+                />`
+              : ''
+          }
+        </div>
+        <div class="resource-slider-scale">
+          <span>${escapeHtml(CONTAINER_REPLICA_OPTIONS[0])}</span>
+          <span>${escapeHtml(CONTAINER_REPLICA_OPTIONS[maxIndex])}</span>
+        </div>
+      </div>
+    `;
   }
 
   function createContainerConfig(options = {}) {
@@ -503,7 +866,7 @@
     const stateful =
       typeof options.stateful === 'boolean' ? options.stateful : Boolean(options.mountDisk);
 
-    return {
+    const baseConfig = {
       image: String(options.image || DEFAULT_DEPLOY_IMAGE).trim(),
       replicas: String(options.replicas || '1').trim(),
       cpu,
@@ -513,13 +876,21 @@
       usedCpu: String(options.usedCpu || estimateUsedCpu(options.quotaCpu || cpu)).trim(),
       usedMemory: String(options.usedMemory || estimateUsedMemory(options.quotaMemory || memory)).trim(),
       envVars: String(options.envVars || '').trim(),
-      startArgs: String(options.startArgs || '').trim(),
+      startArgs: String(options.startArgs || 'start.sh').trim(),
       stateful,
       mountDisk: stateful,
       diskSize: String(options.diskSize || (stateful ? '20Gi' : '')).trim(),
       diskUsed: String(options.diskUsed || (stateful ? estimateUsedDisk(options.diskSize || '20Gi') : '')).trim(),
       mountPath: String(options.mountPath || (stateful ? '/data' : '')).trim(),
+      configFiles: normalizeContainerConfigFiles(options.configFiles),
     };
+
+    return normalizeContainerConfigShape({
+      ...baseConfig,
+      scalingMode: options.scalingMode,
+      minReplicas: options.minReplicas,
+      maxReplicas: options.maxReplicas,
+    });
   }
 
   function syncContainerNode(node) {
@@ -541,13 +912,16 @@
         envVars: details.envVars,
         startArgs: details.entrypoint || details.startArgs,
         stateful: details.stateful,
-        mountDisk: details.mountDisk,
-        diskSize: details.diskSize,
-        diskUsed: details.diskUsed,
-        mountPath: details.mountPath,
-      }),
+      mountDisk: details.mountDisk,
+      diskSize: details.diskSize,
+      diskUsed: details.diskUsed,
+      mountPath: details.mountPath,
+      configFiles: details.configFiles,
+    }),
       ...(node.containerConfig || {}),
     };
+
+    Object.assign(nextConfig, normalizeContainerConfigShape(nextConfig));
 
     nextConfig.stateful =
       typeof nextConfig.stateful === 'boolean' ? nextConfig.stateful : Boolean(nextConfig.mountDisk);
@@ -580,13 +954,14 @@
     node.details = {
       ...details,
       image: nextConfig.image,
-      replicas: `${nextConfig.replicas} 副本`,
+      replicas: containerReplicaLabel(nextConfig),
       cpu: nextConfig.cpu,
       memory: nextConfig.memory,
       quotaCpu: nextConfig.quotaCpu,
       quotaMemory: nextConfig.quotaMemory,
       usedCpu: nextConfig.usedCpu,
       usedMemory: nextConfig.usedMemory,
+      scaling: nextConfig.scalingMode === 'elastic' ? `${nextConfig.minReplicas}-${nextConfig.maxReplicas}` : '固定副本',
       quota: `${nextConfig.quotaCpu} CPU / ${nextConfig.quotaMemory}`,
       used: `${nextConfig.usedCpu} CPU / ${nextConfig.usedMemory}`,
       envVars: nextConfig.envVars,
@@ -595,6 +970,7 @@
       diskSize: nextConfig.diskSize,
       diskUsed: nextConfig.diskUsed,
       mountPath: nextConfig.mountPath,
+      configFiles: normalizeContainerConfigFiles(nextConfig.configFiles),
       runtime: `${nextConfig.cpu} CPU / ${nextConfig.memory}`,
     };
 
@@ -1694,7 +2070,7 @@
   }
 
   function databaseConfigChanged(node, draft) {
-    const fields = ['instanceSpec', 'cpu', 'memory', 'replicas', 'storage', 'backupPolicy'];
+    const fields = ['instanceSpec', 'cpu', 'memory', 'replicas', 'storage'];
     return fields.some((field) => String((node.databaseConfig || {})[field]) !== String((draft || {})[field]));
   }
 
@@ -1713,17 +2089,27 @@
   }
 
   function containerConfigFingerprint(config) {
+    const normalized = normalizeContainerConfigShape(config || {});
     return JSON.stringify({
-      image: String((config && config.image) || '').trim(),
-      replicas: String((config && config.replicas) || '').trim(),
-      cpu: String((config && config.cpu) || '').trim(),
-      memory: String((config && config.memory) || '').trim(),
-      envVars: String((config && config.envVars) || '').trim(),
-      startArgs: String((config && config.startArgs) || '').trim(),
-      mountDisk: Boolean(config && config.mountDisk),
-      diskSize: String((config && config.diskSize) || '').trim(),
-      diskUsed: String((config && config.diskUsed) || '').trim(),
-      mountPath: String((config && config.mountPath) || '').trim(),
+      image: String(normalized.image || '').trim(),
+      replicas: String(normalized.replicas || '').trim(),
+      scalingMode: String(normalized.scalingMode || 'fixed').trim(),
+      minReplicas: String(normalized.minReplicas || '').trim(),
+      maxReplicas: String(normalized.maxReplicas || '').trim(),
+      cpu: String(normalized.cpu || '').trim(),
+      memory: String(normalized.memory || '').trim(),
+      envVars: String(normalized.envVars || '').trim(),
+      startArgs: String(normalized.startArgs || '').trim(),
+      mountDisk: Boolean(normalized.mountDisk),
+      diskSize: String(normalized.diskSize || '').trim(),
+      diskUsed: String(normalized.diskUsed || '').trim(),
+      mountPath: String(normalized.mountPath || '').trim(),
+      configFiles: normalized.configFiles.map((item) => ({
+        path: String(item.path || '').trim(),
+        content: String(item.content || ''),
+        saved: Boolean(item.saved),
+        collapsed: Boolean(item.collapsed),
+      })),
     });
   }
 
@@ -1755,11 +2141,23 @@
     }
 
     const { node, view } = context;
-    const draft = view.configDraft || {};
+    const draft = {
+      ...(view.configDraft || {}),
+      cpu: String((view.configDraft && view.configDraft.cpu) || '').trim(),
+      memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
+      replicas: String((view.configDraft && view.configDraft.replicas) || '').trim(),
+      storage: String((view.configDraft && view.configDraft.storage) || '').trim(),
+    };
+    draft.instanceSpec = resolveDatabaseInstanceSpec(
+      node.databaseConfig.flavor,
+      draft.cpu || node.databaseConfig.cpu,
+      draft.memory || node.databaseConfig.memory,
+      draft.instanceSpec || node.databaseConfig.instanceSpec,
+    );
 
-    if (!draft.instanceSpec || !draft.cpu || !draft.memory || !draft.replicas) {
-      state.databaseView.error = '请先补全数据库规格、CPU、内存和副本数。';
-      renderSidebarContext();
+    if (!draft.cpu || !draft.memory || !draft.replicas || !draft.storage) {
+      state.databaseView.error = '请先补全副本数、CPU、内存和存储。';
+      renderChat();
       return;
     }
 
@@ -1776,7 +2174,7 @@
 
     addMessage(
       'assistant',
-      `数据库配置已更新：${node.title} 调整为 ${node.databaseConfig.instanceSpec}，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，${node.databaseConfig.replicas} 副本。`,
+      `数据库配置已更新：${node.title} ${node.databaseConfig.version} 调整为 ${node.databaseConfig.replicas} 副本，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，存储 ${node.databaseConfig.storage}。`,
     );
     renderAll();
   }
@@ -1800,7 +2198,7 @@
     if (!draft.externalDomain || !draft.internalDomain || !draft.cnameHost || !draft.cnameTarget) {
       state.entryView.error = '请先补全内网域名、外网域名和 CNAME 配置。';
       state.entryView.info = '';
-      renderSidebarContext();
+      renderChat();
       return;
     }
 
@@ -1828,10 +2226,9 @@
     }
 
     const { node, view } = context;
-    const draft = {
+    const draft = normalizeContainerConfigShape({
       ...(view.configDraft || {}),
       image: String((view.configDraft && view.configDraft.image) || '').trim(),
-      replicas: String((view.configDraft && view.configDraft.replicas) || '').trim(),
       cpu: String((view.configDraft && view.configDraft.cpu) || '').trim(),
       memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
       envVars: String((view.configDraft && view.configDraft.envVars) || '').trim(),
@@ -1840,19 +2237,34 @@
       diskSize: String((view.configDraft && view.configDraft.diskSize) || '').trim(),
       diskUsed: String((view.configDraft && view.configDraft.diskUsed) || '').trim(),
       mountPath: String((view.configDraft && view.configDraft.mountPath) || '').trim(),
-    };
+      configFiles: normalizeContainerConfigFiles(view.configDraft && view.configDraft.configFiles),
+    });
 
     if (!draft.image || !draft.replicas || !draft.cpu || !draft.memory) {
       state.containerView.error = '请先补全镜像、副本数、CPU 和内存。';
       state.containerView.info = '';
-      renderSidebarContext();
+      renderChat();
+      return;
+    }
+
+    if (draft.scalingMode === 'elastic' && Number(draft.maxReplicas) < Number(draft.minReplicas)) {
+      state.containerView.error = '弹性伸缩的最大副本数不能小于最小副本数。';
+      state.containerView.info = '';
+      renderChat();
       return;
     }
 
     if (draft.mountDisk && (!draft.diskSize || !draft.mountPath)) {
       state.containerView.error = '有状态实例需要磁盘大小和挂载路径。';
       state.containerView.info = '';
-      renderSidebarContext();
+      renderChat();
+      return;
+    }
+
+    if (draft.configFiles.some((item) => (item.path && !item.content) || (!item.path && item.content))) {
+      state.containerView.error = '配置文件需要同时填写文件路径和内容。';
+      state.containerView.info = '';
+      renderChat();
       return;
     }
 
@@ -1865,16 +2277,17 @@
       usedCpu: estimateUsedCpu(draft.cpu),
       usedMemory: estimateUsedMemory(draft.memory),
       diskUsed: draft.mountDisk ? draft.diskUsed || estimateUsedDisk(draft.diskSize) : '',
+      configFiles: normalizeContainerConfigFiles(draft.configFiles),
     };
     syncContainerNode(node);
     state.containerView.configDraft = { ...node.containerConfig };
     state.containerView.saveState = 'done';
     state.containerView.error = '';
-    state.containerView.info = `${node.containerConfig.replicas} 副本 / ${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}`;
+    state.containerView.info = `${containerReplicaLabel(node.containerConfig)} / ${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}`;
 
     addMessage(
       'assistant',
-      `容器配置已更新：${node.title} 调整为 ${node.containerConfig.replicas} 副本，${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}。`,
+      `容器配置已更新：${node.title} 调整为 ${containerReplicaLabel(node.containerConfig)}，${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}。`,
     );
     renderAll();
   }
@@ -1899,7 +2312,7 @@
     if (!draft.cpu || !draft.memory || !draft.diskSize) {
       state.devboxView.error = '请先补全 CPU、内存和磁盘大小。';
       state.devboxView.info = '';
-      renderSidebarContext();
+      renderChat();
       return;
     }
 
@@ -2051,7 +2464,7 @@
 
     state.entryView.info = `${draft.cnameHost || '-'} -> ${draft.cnameTarget || '-'}`;
     state.entryView.error = '';
-    renderSidebarContext();
+    renderChat();
   }
 
   function addEntryWhitelistItem() {
@@ -2064,7 +2477,7 @@
     if (!nextValue) {
       state.entryView.error = '请输入 IP 地址或 CIDR 网段。';
       state.entryView.info = '';
-      renderSidebarContext();
+      renderChat();
       return;
     }
 
@@ -2076,7 +2489,7 @@
     state.entryView.saveState = 'editing';
     state.entryView.error = '';
     state.entryView.info = '';
-    renderSidebarContext();
+    renderChat();
   }
 
   function removeEntryWhitelistItem(index) {
@@ -2093,7 +2506,98 @@
     state.entryView.saveState = 'editing';
     state.entryView.error = '';
     state.entryView.info = '';
-    renderSidebarContext();
+    renderChat();
+  }
+
+  function addContainerConfigFileItem() {
+    const context = activeContainerContext();
+    if (!context) {
+      return;
+    }
+
+    const current = normalizeContainerConfigFiles(context.view.configDraft && context.view.configDraft.configFiles).map((item) =>
+      item.saved
+        ? {
+            ...item,
+            collapsed: true,
+          }
+        : item,
+    );
+    state.containerView.configDraft.configFiles = [...current, { path: '', content: '', saved: false, collapsed: false }];
+    state.containerView.saveState = 'editing';
+    state.containerView.error = '';
+    state.containerView.info = '';
+    renderChat();
+  }
+
+  function removeContainerConfigFileItem(index) {
+    const context = activeContainerContext();
+    if (!context) {
+      return;
+    }
+
+    state.containerView.configDraft.configFiles = normalizeContainerConfigFiles(
+      ((state.containerView.configDraft && state.containerView.configDraft.configFiles) || []).filter(
+        (_item, itemIndex) => itemIndex !== index,
+      ),
+    );
+    state.containerView.saveState = 'editing';
+    state.containerView.error = '';
+    state.containerView.info = '';
+    renderChat();
+  }
+
+  function saveContainerConfigFileItem(index) {
+    const context = activeContainerContext();
+    if (!context) {
+      return;
+    }
+
+    const configFiles = normalizeContainerConfigFiles(context.view.configDraft && context.view.configDraft.configFiles);
+    if (index < 0 || index >= configFiles.length) {
+      return;
+    }
+
+    const item = configFiles[index];
+    if (!item.path || !item.content) {
+      state.containerView.error = '配置文件需要同时填写文件路径和内容。';
+      state.containerView.info = '';
+      renderChat();
+      return;
+    }
+
+    configFiles[index] = {
+      ...item,
+      saved: true,
+      collapsed: false,
+    };
+    state.containerView.configDraft.configFiles = configFiles;
+    state.containerView.saveState = 'editing';
+    state.containerView.error = '';
+    state.containerView.info = `已保存配置文件：${item.path}`;
+    renderChat();
+  }
+
+  function expandContainerConfigFileItem(index) {
+    const context = activeContainerContext();
+    if (!context) {
+      return;
+    }
+
+    const configFiles = normalizeContainerConfigFiles(context.view.configDraft && context.view.configDraft.configFiles);
+    if (index < 0 || index >= configFiles.length) {
+      return;
+    }
+
+    configFiles[index] = {
+      ...configFiles[index],
+      collapsed: false,
+    };
+    state.containerView.configDraft.configFiles = configFiles;
+    state.containerView.saveState = 'editing';
+    state.containerView.error = '';
+    state.containerView.info = '';
+    renderChat();
   }
 
   function openDomainTarget(value) {
@@ -2126,14 +2630,29 @@
       return false;
     }
 
-    state.databaseView.configDraft[input.dataset.dbConfigField] = input.value;
+    const field = input.dataset.dbConfigField;
+    let nextValue = input.value;
+    if (input.type === 'range') {
+      nextValue = databaseSliderValue(field, input.value);
+    }
+
+    state.databaseView.configDraft[field] = nextValue;
     state.databaseView.saveState = 'editing';
     state.databaseView.error = '';
 
-    if (input.dataset.dbConfigField === 'instanceSpec') {
-      const profile = databaseSpecProfile(input.value);
+    if (field === 'instanceSpec') {
+      const profile = databaseSpecProfile(nextValue);
       state.databaseView.configDraft.cpu = profile.cpu;
       state.databaseView.configDraft.memory = profile.memory;
+    }
+
+    if (field === 'cpu' || field === 'memory') {
+      state.databaseView.configDraft.instanceSpec = resolveDatabaseInstanceSpec(
+        state.databaseView.configDraft.flavor || (state.databaseView.nodeId && getNodeById(state.databaseView.nodeId).databaseConfig.flavor) || 'PostgreSQL',
+        field === 'cpu' ? nextValue : state.databaseView.configDraft.cpu,
+        field === 'memory' ? nextValue : state.databaseView.configDraft.memory,
+        state.databaseView.configDraft.instanceSpec,
+      );
     }
 
     return true;
@@ -2144,25 +2663,74 @@
       return false;
     }
 
+    const configFileInput = target.closest('[data-container-config-file-field]');
+    if (configFileInput && state.containerView) {
+      const field = configFileInput.dataset.containerConfigFileField;
+      const index = Number(configFileInput.dataset.containerConfigFileIndex || '-1');
+      const configFiles = normalizeContainerConfigFiles(state.containerView.configDraft.configFiles);
+      if (!field || index < 0 || index >= configFiles.length) {
+        return false;
+      }
+
+      configFiles[index] = {
+        ...configFiles[index],
+        [field]: configFileInput.value,
+        saved: false,
+        collapsed: false,
+      };
+      state.containerView.configDraft.configFiles = configFiles;
+      state.containerView.saveState = 'editing';
+      state.containerView.error = '';
+      state.containerView.info = '';
+      return true;
+    }
+
     const input = target.closest('[data-container-config-field]');
     if (!input || !state.containerView) {
       return false;
     }
 
     const field = input.dataset.containerConfigField;
-    state.containerView.configDraft[field] = input.type === 'checkbox' ? input.checked : input.value;
+    let nextValue = input.type === 'checkbox' ? input.checked : input.value;
+    if (input.type === 'range') {
+      if (field === 'cpu' || field === 'memory' || field === 'diskSize') {
+        nextValue = containerSliderValue(field, input.value);
+      } else if (field === 'replicas' || field === 'minReplicas' || field === 'maxReplicas') {
+        nextValue = containerSliderValue('replicas', input.value);
+      }
+    }
+
+    state.containerView.configDraft[field] = nextValue;
     state.containerView.saveState = 'editing';
     state.containerView.error = '';
     state.containerView.info = '';
 
     if (field === 'cpu') {
-      state.containerView.configDraft.quotaCpu = input.value;
-      state.containerView.configDraft.usedCpu = estimateUsedCpu(input.value);
+      state.containerView.configDraft.quotaCpu = nextValue;
+      state.containerView.configDraft.usedCpu = estimateUsedCpu(nextValue);
+    }
+
+    if (field === 'replicas') {
+      state.containerView.configDraft.scalingMode = 'fixed';
+      state.containerView.configDraft.minReplicas = nextValue;
+      state.containerView.configDraft.maxReplicas = nextValue;
+    }
+
+    if (field === 'minReplicas' && !state.containerView.configDraft.maxReplicas) {
+      state.containerView.configDraft.maxReplicas = nextValue;
+    }
+
+    if (field === 'minReplicas' || field === 'maxReplicas') {
+      state.containerView.configDraft.scalingMode = 'elastic';
     }
 
     if (field === 'memory') {
-      state.containerView.configDraft.quotaMemory = input.value;
-      state.containerView.configDraft.usedMemory = estimateUsedMemory(input.value);
+      state.containerView.configDraft.quotaMemory = nextValue;
+      state.containerView.configDraft.usedMemory = estimateUsedMemory(nextValue);
+    }
+
+    if (field === 'diskSize') {
+      state.containerView.configDraft.diskUsed = estimateUsedDisk(nextValue || '20Gi');
     }
 
     if (field === 'mountDisk' && !input.checked) {
@@ -2174,9 +2742,14 @@
     if (field === 'mountDisk' && input.checked) {
       state.containerView.configDraft.diskSize = state.containerView.configDraft.diskSize || '20Gi';
       state.containerView.configDraft.diskUsed =
-        state.containerView.configDraft.diskUsed || estimateUsedDisk(state.containerView.configDraft.diskSize);
+          state.containerView.configDraft.diskUsed || estimateUsedDisk(state.containerView.configDraft.diskSize);
       state.containerView.configDraft.mountPath = state.containerView.configDraft.mountPath || '/data';
     }
+
+    Object.assign(
+      state.containerView.configDraft,
+      normalizeContainerConfigShape(ensureElasticReplicaRange(state.containerView.configDraft)),
+    );
 
     return true;
   }
@@ -2215,23 +2788,28 @@
     }
 
     const field = input.dataset.devboxConfigField;
-    state.devboxView.configDraft[field] = input.value;
+    let nextValue = input.value;
+    if (input.type === 'range') {
+      nextValue = devboxSliderValue(field, input.value);
+    }
+
+    state.devboxView.configDraft[field] = nextValue;
     state.devboxView.saveState = 'editing';
     state.devboxView.error = '';
     state.devboxView.info = '';
 
     if (field === 'cpu') {
-      state.devboxView.configDraft.quotaCpu = input.value;
-      state.devboxView.configDraft.usedCpu = estimateUsedCpu(input.value);
+      state.devboxView.configDraft.quotaCpu = nextValue;
+      state.devboxView.configDraft.usedCpu = estimateUsedCpu(nextValue);
     }
 
     if (field === 'memory') {
-      state.devboxView.configDraft.quotaMemory = input.value;
-      state.devboxView.configDraft.usedMemory = estimateUsedMemory(input.value);
+      state.devboxView.configDraft.quotaMemory = nextValue;
+      state.devboxView.configDraft.usedMemory = estimateUsedMemory(nextValue);
     }
 
     if (field === 'diskSize') {
-      state.devboxView.configDraft.diskUsed = estimateUsedDisk(input.value || '50Gi');
+      state.devboxView.configDraft.diskUsed = estimateUsedDisk(nextValue || '50Gi');
     }
 
     return true;
@@ -2423,6 +3001,9 @@
 
   function resetState() {
     const initial = getInitialGraph();
+    if (state.linkingPending && state.linkingPending.timerId) {
+      window.clearTimeout(state.linkingPending.timerId);
+    }
     state.nodes = initial.nodes.map((node) => hydrateNode(node));
     state.edges = initial.edges;
     state.messages = initial.messages;
@@ -2435,6 +3016,8 @@
     state.containerView = null;
     state.devboxView = null;
     state.projectListOpen = false;
+    state.linkingPending = null;
+    state.linking = null;
     state.lastIssue = {
       title: 'FastGPT 启动失败',
       reason: '后端实例缺少 `OPENAI_API_KEY`，入口健康检查连续失败。',
@@ -2469,6 +3052,180 @@
     state.messages.push(message);
     renderChat();
     return message;
+  }
+
+  function suppressNodeClickOnce(nodeId) {
+    if (!nodeId) {
+      return;
+    }
+
+    state.suppressClickNodeId = nodeId;
+    window.setTimeout(() => {
+      if (state.suppressClickNodeId === nodeId) {
+        state.suppressClickNodeId = null;
+      }
+    }, 260);
+  }
+
+  function upsertEnvVarText(envText, key, value) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return String(envText || '').trim();
+    }
+
+    const nextLine = `${normalizedKey}=${String(value || '').trim()}`;
+    const prefix = `${normalizedKey}=`;
+    const lines = String(envText || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+
+    let replaced = false;
+    const nextLines = lines.map((line) => {
+      if (line.startsWith(prefix)) {
+        replaced = true;
+        return nextLine;
+      }
+
+      return line;
+    });
+
+    if (!replaced) {
+      nextLines.push(nextLine);
+    }
+
+    return nextLines.join('\n');
+  }
+
+  function getEdgeByNodes(fromId, toId) {
+    return state.edges.find((edge) => edge.from === fromId && edge.to === toId) || null;
+  }
+
+  function normalizeConnectionPair(sourceNode, targetNode) {
+    if (!sourceNode || !targetNode) {
+      return null;
+    }
+
+    if (
+      (sourceNode.type === 'container' && targetNode.type === 'database') ||
+      (sourceNode.type === 'database' && targetNode.type === 'container')
+    ) {
+      const containerNode = sourceNode.type === 'container' ? sourceNode : targetNode;
+      const databaseNode = sourceNode.type === 'database' ? sourceNode : targetNode;
+      return {
+        fromNode: containerNode,
+        toNode: databaseNode,
+      };
+    }
+
+    return {
+      fromNode: sourceNode,
+      toNode: targetNode,
+    };
+  }
+
+  function connectionLabelForNodes(sourceNode, targetNode) {
+    const normalized = normalizeConnectionPair(sourceNode, targetNode);
+    if (!normalized) {
+      return 'Link';
+    }
+
+    const { fromNode, toNode } = normalized;
+
+    if (fromNode.type === 'container' && toNode.type === 'database') {
+      return databaseConnectionLabel((toNode.databaseConfig && toNode.databaseConfig.flavor) || databaseFlavorFromNode(toNode));
+    }
+
+    if (fromNode.type === 'entry') {
+      return 'Route';
+    }
+
+    if (fromNode.type === 'devbox') {
+      return 'Workspace';
+    }
+
+    return 'Link';
+  }
+
+  function injectDatabaseEnvIntoContainer(containerNode, databaseNode) {
+    if (!containerNode || !databaseNode || containerNode.type !== 'container' || databaseNode.type !== 'database') {
+      return null;
+    }
+
+    syncContainerNode(containerNode);
+    syncDatabaseNode(databaseNode);
+
+    const envKey = databaseConnectionLabel(
+      (databaseNode.databaseConfig && databaseNode.databaseConfig.flavor) || databaseFlavorFromNode(databaseNode),
+    );
+    const envValue = String((databaseNode.details && databaseNode.details.connect) || '').trim();
+    if (!envKey || !envValue) {
+      return null;
+    }
+
+    containerNode.containerConfig = {
+      ...containerNode.containerConfig,
+      envVars: upsertEnvVarText((containerNode.containerConfig && containerNode.containerConfig.envVars) || '', envKey, envValue),
+    };
+    syncContainerNode(containerNode);
+
+    if (state.containerView && state.containerView.nodeId === containerNode.id) {
+      state.containerView.configDraft = {
+        ...(state.containerView.configDraft || {}),
+        envVars: upsertEnvVarText(
+          (state.containerView.configDraft && state.containerView.configDraft.envVars) || containerNode.containerConfig.envVars || '',
+          envKey,
+          envValue,
+        ),
+      };
+      state.containerView.info = `${envKey} 已注入`;
+      state.containerView.error = '';
+    }
+
+    return {
+      sourceNodeId: containerNode.id,
+      targetNodeId: databaseNode.id,
+      envKey,
+      envValue,
+      keyLabel: 'databaseUrl',
+      valueLabel: 'databaseValue',
+    };
+  }
+
+  function createNodeConnection(sourceNodeId, targetNodeId) {
+    const sourceNode = getNodeById(sourceNodeId);
+    const targetNode = getNodeById(targetNodeId);
+    if (!sourceNode || !targetNode || sourceNode.id === targetNode.id) {
+      return;
+    }
+
+    const normalized = normalizeConnectionPair(sourceNode, targetNode);
+    if (!normalized) {
+      return;
+    }
+
+    const label = connectionLabelForNodes(normalized.fromNode, normalized.toNode);
+    const existing = getEdgeByNodes(normalized.fromNode.id, normalized.toNode.id);
+    if (existing) {
+      existing.label = label;
+    } else {
+      state.edges.push({
+        id: createId('edge'),
+        from: normalized.fromNode.id,
+        to: normalized.toNode.id,
+        label,
+      });
+    }
+
+    const injectionPayload = injectDatabaseEnvIntoContainer(normalized.fromNode, normalized.toNode);
+    if (injectionPayload) {
+      addAguiMessage('env-injection', injectionPayload);
+    } else {
+      addMessage(
+        'assistant',
+        `已建立连线：${cardTitleForNode(normalized.fromNode) || normalized.fromNode.title} -> ${cardTitleForNode(normalized.toNode) || normalized.toNode.title}。`,
+      );
+    }
   }
 
   function configUiForNode(node) {
@@ -2690,7 +3447,7 @@
             `
           : '';
       const devboxCard = node.type === 'devbox' ? renderNodeDevboxCard(node, devboxConfig) : '';
-      const topIndicators = node.type === 'database' || node.type === 'devbox' ? '' : '<div class="node-led"></div>';
+      const topIndicators = '';
       const badgeMarkup =
         node.type === 'database'
           ? ''
@@ -2708,6 +3465,7 @@
       card.style.left = `${node.x}px`;
       card.style.top = `${node.y}px`;
       card.innerHTML = `
+        <span class="node-link-handle" data-node-link-handle="true" aria-hidden="true">+</span>
         ${badgeMarkup}
         ${
           headingMarkup || topIndicators
@@ -2729,6 +3487,10 @@
       `;
 
       card.addEventListener('click', async (event) => {
+        if (event.target.closest('[data-node-link-handle]')) {
+          return;
+        }
+
         if (state.suppressClickNodeId === node.id) {
           state.suppressClickNodeId = null;
           return;
@@ -2789,6 +3551,12 @@
 
       card.addEventListener('pointerdown', (event) => {
         if (event.button !== 0) {
+          return;
+        }
+
+        if (event.target.closest('[data-node-link-handle]')) {
+          event.preventDefault();
+          beginLinkGesture(node.id, event.pointerId, event.clientX, event.clientY);
           return;
         }
 
@@ -2948,7 +3716,7 @@
     dom.canvasWorkspace.innerHTML = `
       <div class="db-workspace-header">
         <div class="db-workspace-copy">
-          <h2 class="db-workspace-title">${escapeHtml(node.title)}</h2>
+          <h2 class="db-workspace-title">${escapeHtml(`${node.title} ${node.databaseConfig.version}`)}</h2>
         </div>
         <div class="db-workspace-actions">
           <button type="button" class="db-ghost-button" data-db-action="toggle-import">
@@ -3169,60 +3937,65 @@
         <div class="db-config-card">
           <div class="db-config-header">
             <div>
-              <strong>${escapeHtml(node.title)}</strong>
-              <span>${escapeHtml(database.name)} / ${escapeHtml(node.databaseConfig.flavor)} ${escapeHtml(node.databaseConfig.version)}</span>
+              <strong>${escapeHtml(`${node.title} ${node.databaseConfig.version}`)}</strong>
             </div>
-            <div class="db-chip">${escapeHtml(node.databaseConfig.instanceSpec)}</div>
           </div>
 
           <section class="db-config-section">
-            <div class="db-config-copy">扩缩容与数据库规格。</div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>Instance</span>
-                <select class="agui-select" data-db-config-field="instanceSpec">
-                  ${selectOptions(databaseSpecOptions(node.databaseConfig.flavor), draft.instanceSpec || node.databaseConfig.instanceSpec)}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Replicas</span>
-                <select class="agui-select" data-db-config-field="replicas">
-                  ${selectOptions(['1', '2', '3', '5'], String(draft.replicas || node.databaseConfig.replicas))}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>CPU</span>
-                <select class="agui-select" data-db-config-field="cpu">
-                  ${selectOptions(['1', '2', '4', '8', '16'], String(draft.cpu || node.databaseConfig.cpu))}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Memory</span>
-                <select class="agui-select" data-db-config-field="memory">
-                  ${selectOptions(['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'], String(draft.memory || node.databaseConfig.memory))}
-                </select>
-              </label>
+            <div class="db-config-copy">副本与资源。</div>
+            <div class="container-slider-grid container-slider-grid-single">
+              ${renderSliderField({
+                label: '副本',
+                field: 'replicas',
+                valueText: `${String(draft.replicas || node.databaseConfig.replicas)} 副本`,
+                valueIndex: databaseSliderIndex('replicas', String(draft.replicas || node.databaseConfig.replicas)),
+                maxIndex: DATABASE_REPLICA_OPTIONS.length - 1,
+                minLabel: DATABASE_REPLICA_OPTIONS[0],
+                maxLabel: DATABASE_REPLICA_OPTIONS[DATABASE_REPLICA_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-db-config-field',
+              })}
+            </div>
+            <div class="container-slider-grid">
+              ${renderSliderField({
+                label: 'CPU',
+                field: 'cpu',
+                valueText: `${String(draft.cpu || node.databaseConfig.cpu)} Core`,
+                valueIndex: databaseSliderIndex('cpu', String(draft.cpu || node.databaseConfig.cpu)),
+                maxIndex: DATABASE_CPU_OPTIONS.length - 1,
+                minLabel: DATABASE_CPU_OPTIONS[0],
+                maxLabel: DATABASE_CPU_OPTIONS[DATABASE_CPU_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-db-config-field',
+              })}
+              ${renderSliderField({
+                label: '内存',
+                field: 'memory',
+                valueText: String(draft.memory || node.databaseConfig.memory),
+                valueIndex: databaseSliderIndex('memory', String(draft.memory || node.databaseConfig.memory)),
+                maxIndex: DATABASE_MEMORY_OPTIONS.length - 1,
+                minLabel: DATABASE_MEMORY_OPTIONS[0],
+                maxLabel: DATABASE_MEMORY_OPTIONS[DATABASE_MEMORY_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-db-config-field',
+              })}
             </div>
           </section>
 
           <section class="db-config-section">
-            <div class="db-config-copy">存储与备份策略。</div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>Storage</span>
-                <input
-                  class="agui-input"
-                  type="text"
-                  value="${escapeHtml(String(draft.storage || node.databaseConfig.storage))}"
-                  data-db-config-field="storage"
-                />
-              </label>
-              <label class="db-config-label">
-                <span>Backup</span>
-                <select class="agui-select" data-db-config-field="backupPolicy">
-                  ${selectOptions(['PITR / Hourly', 'Snapshot / 6h', 'Daily Snapshot'], String(draft.backupPolicy || node.databaseConfig.backupPolicy))}
-                </select>
-              </label>
+            <div class="db-config-copy">存储。</div>
+            <div class="container-slider-grid container-slider-grid-single">
+              ${renderSliderField({
+                label: '存储大小',
+                field: 'storage',
+                valueText: String(draft.storage || node.databaseConfig.storage),
+                valueIndex: databaseSliderIndex('storage', String(draft.storage || node.databaseConfig.storage)),
+                maxIndex: DATABASE_STORAGE_OPTIONS.length - 1,
+                minLabel: DATABASE_STORAGE_OPTIONS[0],
+                maxLabel: DATABASE_STORAGE_OPTIONS[DATABASE_STORAGE_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-db-config-field',
+              })}
             </div>
           </section>
 
@@ -3475,33 +4248,15 @@
                 draft.whitelist.length
                   ? draft.whitelist
                       .map(
-                        (item, index) => `
+                        (item) => `
                           <div class="entry-whitelist-item">
                             <span>${escapeHtml(item)}</span>
-                            <button
-                              type="button"
-                              class="entry-whitelist-remove"
-                              data-entry-config-action="remove-whitelist"
-                              data-entry-whitelist-index="${index}"
-                            >
-                              删除
-                            </button>
                           </div>
                         `,
                       )
                       .join('')
                   : '<div class="agui-empty">当前没有白名单条目。</div>'
               }
-            </div>
-            <div class="entry-whitelist-editor">
-              <input
-                class="agui-input"
-                type="text"
-                value="${escapeHtml(view.whitelistDraft || '')}"
-                placeholder="203.0.113.24"
-                data-entry-config-field="whitelistDraft"
-              />
-              <button type="button" class="db-primary-button" data-entry-config-action="add-whitelist">添加</button>
             </div>
           </section>
 
@@ -3526,7 +4281,7 @@
         port: String(((view.configDraft && view.configDraft.port) || devbox.port) || '').trim(),
       };
       const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
-      const stack = devboxTemplateStack(template);
+      const accessDomain = String((node.details && node.details.access) || '').trim();
       const changed = devboxConfigChanged(node, draft);
       const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
       const statusText = view.error
@@ -3545,51 +4300,68 @@
         <div class="db-config-card">
           <div class="db-config-header">
             <div>
-              <strong>${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
-              <span>开发环境</span>
+              <strong>${escapeHtml(`${cardTitleForNode(node) || 'Workspace'} 开发环境`)}</strong>
             </div>
             <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
           </div>
 
           <section class="db-config-section">
-            <div class="db-config-copy">当前工作区模板。</div>
-            <div class="devbox-stack-row">
-              ${stack.map((item) => renderTemplateBadge(item, 'devbox-template-badge')).join('')}
+            <div class="db-config-copy">资源规则。</div>
+            <div class="container-slider-grid">
+              ${renderSliderField({
+                label: 'CPU',
+                field: 'cpu',
+                valueText: `${draft.cpu || '4'} Core`,
+                valueIndex: devboxSliderIndex('cpu', draft.cpu || '4'),
+                maxIndex: DEVBOX_CPU_OPTIONS.length - 1,
+                minLabel: DEVBOX_CPU_OPTIONS[0],
+                maxLabel: DEVBOX_CPU_OPTIONS[DEVBOX_CPU_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-devbox-config-field',
+              })}
+              ${renderSliderField({
+                label: '内存',
+                field: 'memory',
+                valueText: draft.memory || '8Gi',
+                valueIndex: devboxSliderIndex('memory', draft.memory || '8Gi'),
+                maxIndex: DEVBOX_MEMORY_OPTIONS.length - 1,
+                minLabel: DEVBOX_MEMORY_OPTIONS[0],
+                maxLabel: DEVBOX_MEMORY_OPTIONS[DEVBOX_MEMORY_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-devbox-config-field',
+              })}
             </div>
-            <div class="devbox-meta-row">
-              ${draft.version ? `<span class="devbox-meta-chip">v${escapeHtml(draft.version)}</span>` : ''}
+            <div class="container-slider-grid container-slider-grid-single">
+              ${renderSliderField({
+                label: '磁盘',
+                field: 'diskSize',
+                valueText: draft.diskSize || '50Gi',
+                valueIndex: devboxSliderIndex('diskSize', draft.diskSize || '50Gi'),
+                maxIndex: DEVBOX_DISK_OPTIONS.length - 1,
+                minLabel: DEVBOX_DISK_OPTIONS[0],
+                maxLabel: DEVBOX_DISK_OPTIONS[DEVBOX_DISK_OPTIONS.length - 1],
+                disabled: false,
+                dataFieldAttr: 'data-devbox-config-field',
+              })}
             </div>
           </section>
 
-          <section class="db-config-section">
-            <div class="db-config-copy">资源规格。</div>
-            <div class="container-runtime-copy">
-              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu || '4'), draft.cpu || '4', { kind: 'cpu' })}
-              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory || '8Gi'), draft.memory || '8Gi')}
-              ${renderContainerMeter('磁盘', draft.diskUsed || estimateUsedDisk(draft.diskSize || '50Gi'), draft.diskSize || '50Gi', {
-                kind: 'capacity',
-                icon: 'storage',
-              })}
-            </div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>CPU</span>
-                <select class="agui-select" data-devbox-config-field="cpu">
-                  ${selectOptions(['2', '4', '8', '16'], draft.cpu || '4')}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Memory</span>
-                <select class="agui-select" data-devbox-config-field="memory">
-                  ${selectOptions(['4Gi', '8Gi', '16Gi', '32Gi'], draft.memory || '8Gi')}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Disk</span>
-                <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize || '50Gi')}" data-devbox-config-field="diskSize" />
-              </label>
-            </div>
-          </section>
+          ${
+            accessDomain
+              ? `<section class="db-config-section">
+                  <div class="db-config-copy">服务域名。</div>
+                  <button
+                    type="button"
+                    class="entry-domain-button"
+                    data-devbox-config-action="open-domain"
+                    data-devbox-domain="${escapeHtml(accessDomain)}"
+                  >
+                    <span>Workspace Service</span>
+                    <strong>${escapeHtml(accessDomain)}</strong>
+                  </button>
+                </section>`
+              : ''
+          }
 
           <section class="db-config-section">
             <div class="db-config-copy">启动命令。</div>
@@ -3642,6 +4414,131 @@
     return String(value);
   }
 
+  function edgeAnchorPoint(element, stageRect, mode = 'center') {
+    const rect = element.getBoundingClientRect();
+    if (mode === 'top') {
+      return {
+        x: rect.left - stageRect.left + rect.width / 2,
+        y: rect.top - stageRect.top,
+      };
+    }
+
+    return {
+      x: rect.left - stageRect.left + rect.width / 2,
+      y: rect.top - stageRect.top + rect.height / 2,
+    };
+  }
+
+  function edgePathForPoints(start, end) {
+    const delta = Math.abs(end.x - start.x);
+    const curvature = Math.max(48, delta * 0.32);
+    return `M ${start.x} ${start.y} C ${start.x + curvature} ${start.y}, ${end.x - curvature} ${end.y}, ${end.x} ${end.y}`;
+  }
+
+  function nodeCardFromPoint(clientX, clientY) {
+    const target = document.elementFromPoint(clientX, clientY);
+    const card = target && target.closest ? target.closest('[data-node-id]') : null;
+    return card || null;
+  }
+
+  function cancelPendingLink() {
+    if (state.linkingPending && state.linkingPending.timerId) {
+      window.clearTimeout(state.linkingPending.timerId);
+    }
+    state.linkingPending = null;
+  }
+
+  function activatePendingLink() {
+    if (!state.linkingPending) {
+      return;
+    }
+
+    const pending = state.linkingPending;
+    state.linkingPending = null;
+    suppressNodeClickOnce(pending.sourceNodeId);
+    const targetCard = nodeCardFromPoint(pending.currentX, pending.currentY);
+    state.linking = {
+      sourceNodeId: pending.sourceNodeId,
+      pointerId: pending.pointerId,
+      currentX: pending.currentX,
+      currentY: pending.currentY,
+      targetNodeId:
+        targetCard && targetCard.dataset.nodeId !== pending.sourceNodeId ? targetCard.dataset.nodeId || '' : '',
+    };
+    scheduleEdgeRender();
+  }
+
+  function beginLinkGesture(sourceNodeId, pointerId, clientX, clientY) {
+    cancelPendingLink();
+    state.linking = null;
+    state.linkingPending = {
+      sourceNodeId,
+      pointerId,
+      currentX: clientX,
+      currentY: clientY,
+      timerId: window.setTimeout(activatePendingLink, 240),
+    };
+  }
+
+  function updateLinkGesture(pointerId, clientX, clientY) {
+    if (state.linkingPending && state.linkingPending.pointerId === pointerId) {
+      state.linkingPending.currentX = clientX;
+      state.linkingPending.currentY = clientY;
+      return;
+    }
+
+    if (!state.linking || state.linking.pointerId !== pointerId) {
+      return;
+    }
+
+    const targetCard = nodeCardFromPoint(clientX, clientY);
+    state.linking.currentX = clientX;
+    state.linking.currentY = clientY;
+    state.linking.targetNodeId =
+      targetCard && targetCard.dataset.nodeId !== state.linking.sourceNodeId ? targetCard.dataset.nodeId || '' : '';
+    scheduleEdgeRender();
+  }
+
+  function finishLinkGesture(pointerId, clientX, clientY) {
+    if (state.linkingPending && state.linkingPending.pointerId === pointerId) {
+      cancelPendingLink();
+      scheduleEdgeRender();
+      return;
+    }
+
+    if (!state.linking || state.linking.pointerId !== pointerId) {
+      return;
+    }
+
+    const sourceNodeId = state.linking.sourceNodeId;
+    const targetCard = nodeCardFromPoint(clientX, clientY);
+    const targetNodeId =
+      targetCard && targetCard.dataset.nodeId !== sourceNodeId ? targetCard.dataset.nodeId || '' : '';
+    state.linking = null;
+    cancelPendingLink();
+
+    if (!targetNodeId) {
+      scheduleEdgeRender();
+      return;
+    }
+
+    suppressNodeClickOnce(targetNodeId);
+    createNodeConnection(sourceNodeId, targetNodeId);
+    renderAll();
+  }
+
+  function cancelLinkGesture(pointerId) {
+    if (state.linkingPending && (!pointerId || state.linkingPending.pointerId === pointerId)) {
+      cancelPendingLink();
+    }
+
+    if (state.linking && (!pointerId || state.linking.pointerId === pointerId)) {
+      state.linking = null;
+    }
+
+    scheduleEdgeRender();
+  }
+
   function renderEdges() {
     const stageRect = dom.canvasWorld.getBoundingClientRect();
     const selectedId = state.selectedNodeId;
@@ -3653,20 +4550,9 @@
           return '';
         }
 
-        const fromRect = fromEl.getBoundingClientRect();
-        const toRect = toEl.getBoundingClientRect();
-        const start = {
-          x: fromRect.left - stageRect.left + fromRect.width / 2,
-          y: fromRect.top - stageRect.top + fromRect.height / 2,
-        };
-        const end = {
-          x: toRect.left - stageRect.left + toRect.width / 2,
-          y: toRect.top - stageRect.top + toRect.height / 2,
-        };
-
-        const delta = Math.abs(end.x - start.x);
-        const curvature = Math.max(48, delta * 0.32);
-        const path = `M ${start.x} ${start.y} C ${start.x + curvature} ${start.y}, ${end.x - curvature} ${end.y}, ${end.x} ${end.y}`;
+        const start = edgeAnchorPoint(fromEl, stageRect, 'center');
+        const end = edgeAnchorPoint(toEl, stageRect, 'center');
+        const path = edgePathForPoints(start, end);
         const midX = (start.x + end.x) / 2;
         const midY = (start.y + end.y) / 2 - 8;
         const highlight = edge.from === selectedId || edge.to === selectedId;
@@ -3679,10 +4565,30 @@
       })
       .join('');
 
+    let previewFragment = '';
+    if (state.linking) {
+      const fromEl = dom.nodeLayer.querySelector(`[data-node-id="${state.linking.sourceNodeId}"]`);
+      if (fromEl) {
+        const start = edgeAnchorPoint(fromEl, stageRect, 'top');
+        const targetEl =
+          state.linking.targetNodeId && dom.nodeLayer.querySelector(`[data-node-id="${state.linking.targetNodeId}"]`);
+        const end = targetEl
+          ? edgeAnchorPoint(targetEl, stageRect, 'top')
+          : {
+              x: state.linking.currentX - stageRect.left,
+              y: state.linking.currentY - stageRect.top,
+            };
+        previewFragment = `<path class="edge-line preview" d="${edgePathForPoints(start, end)}"></path>`;
+      }
+    }
+
     const defs = dom.edgeLayer.querySelector('defs');
     dom.edgeLayer.innerHTML = '';
     dom.edgeLayer.appendChild(defs);
     dom.edgeLayer.insertAdjacentHTML('beforeend', edgeFragments);
+    if (previewFragment) {
+      dom.edgeLayer.insertAdjacentHTML('beforeend', previewFragment);
+    }
   }
 
   function scheduleEdgeRender() {
@@ -3763,6 +4669,11 @@
       return;
     }
 
+    const scrollHost = dom.chatScroll || dom.chatLog;
+    const previousScrollTop = scrollHost.scrollTop;
+    const previousDistanceFromBottom = scrollHost.scrollHeight - scrollHost.scrollTop - scrollHost.clientHeight;
+    const shouldStickToBottom = previousDistanceFromBottom <= 28;
+
     dom.chatLog.innerHTML = state.messages
       .map((message) => {
         if (message.kind === 'agui') {
@@ -3778,12 +4689,13 @@
       })
       .join('');
 
-    if (dom.chatScroll) {
-      dom.chatScroll.scrollTop = dom.chatScroll.scrollHeight;
+    if (shouldStickToBottom) {
+      scrollHost.scrollTop = scrollHost.scrollHeight;
       return;
     }
 
-    dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
+    const nextTop = scrollHost.scrollHeight - scrollHost.clientHeight - previousDistanceFromBottom;
+    scrollHost.scrollTop = Number.isFinite(nextTop) ? Math.max(0, nextTop) : previousScrollTop;
   }
 
   function renderTimeline() {
@@ -4060,15 +4972,72 @@
       }
 
       const containerButton = event.target.closest('[data-container-config-action]');
-      if (containerButton && state.containerView && containerButton.dataset.containerConfigAction === 'save') {
-        saveContainerConfig();
-        return;
+      if (containerButton && state.containerView) {
+        if (containerButton.dataset.containerConfigAction === 'set-scaling-mode') {
+          const nextMode = containerButton.dataset.containerScalingMode === 'elastic' ? 'elastic' : 'fixed';
+          state.containerView.configDraft.scalingMode = nextMode;
+          if (nextMode === 'fixed') {
+            const fixedValue = state.containerView.configDraft.minReplicas || state.containerView.configDraft.replicas || '1';
+            state.containerView.configDraft.minReplicas = fixedValue;
+            state.containerView.configDraft.maxReplicas = fixedValue;
+          } else {
+            const minReplicas = state.containerView.configDraft.minReplicas || state.containerView.configDraft.replicas || '1';
+            const currentMax = state.containerView.configDraft.maxReplicas || '';
+            const maxReplicas =
+              currentMax && containerSliderIndex('replicas', currentMax) > containerSliderIndex('replicas', minReplicas)
+                ? currentMax
+                : containerSliderValue('replicas', containerSliderIndex('replicas', minReplicas) + 1);
+            state.containerView.configDraft.minReplicas = minReplicas;
+            state.containerView.configDraft.maxReplicas = maxReplicas;
+          }
+          Object.assign(
+            state.containerView.configDraft,
+            normalizeContainerConfigShape(ensureElasticReplicaRange(state.containerView.configDraft)),
+          );
+          state.containerView.saveState = 'editing';
+          state.containerView.error = '';
+          state.containerView.info = '';
+          renderChat();
+          return;
+        }
+
+        if (containerButton.dataset.containerConfigAction === 'add-config-file') {
+          addContainerConfigFileItem();
+          return;
+        }
+
+        if (containerButton.dataset.containerConfigAction === 'save-config-file') {
+          saveContainerConfigFileItem(Number(containerButton.dataset.containerConfigFileIndex || '-1'));
+          return;
+        }
+
+        if (containerButton.dataset.containerConfigAction === 'expand-config-file') {
+          expandContainerConfigFileItem(Number(containerButton.dataset.containerConfigFileIndex || '-1'));
+          return;
+        }
+
+        if (containerButton.dataset.containerConfigAction === 'remove-config-file') {
+          removeContainerConfigFileItem(Number(containerButton.dataset.containerConfigFileIndex || '-1'));
+          return;
+        }
+
+        if (containerButton.dataset.containerConfigAction === 'save') {
+          saveContainerConfig();
+          return;
+        }
       }
 
       const devboxButton = event.target.closest('[data-devbox-config-action]');
-      if (devboxButton && state.devboxView && devboxButton.dataset.devboxConfigAction === 'save') {
-        saveDevboxConfig();
-        return;
+      if (devboxButton) {
+        if (devboxButton.dataset.devboxConfigAction === 'open-domain') {
+          openDomainTarget(devboxButton.dataset.devboxDomain || '');
+          return;
+        }
+
+        if (state.devboxView && devboxButton.dataset.devboxConfigAction === 'save') {
+          saveDevboxConfig();
+          return;
+        }
       }
 
       const entryButton = event.target.closest('[data-entry-config-action]');
@@ -4221,14 +5190,29 @@
           return false;
         }
 
-        state.databaseView.configDraft[input.dataset.dbConfigField] = input.value;
+        const field = input.dataset.dbConfigField;
+        let nextValue = input.value;
+        if (input.type === 'range') {
+          nextValue = databaseSliderValue(field, input.value);
+        }
+
+        state.databaseView.configDraft[field] = nextValue;
         state.databaseView.saveState = 'editing';
         state.databaseView.error = '';
 
-        if (input.dataset.dbConfigField === 'instanceSpec') {
-          const profile = databaseSpecProfile(input.value);
+        if (field === 'instanceSpec') {
+          const profile = databaseSpecProfile(nextValue);
           state.databaseView.configDraft.cpu = profile.cpu;
           state.databaseView.configDraft.memory = profile.memory;
+        }
+
+        if (field === 'cpu' || field === 'memory') {
+          state.databaseView.configDraft.instanceSpec = resolveDatabaseInstanceSpec(
+            state.databaseView.configDraft.flavor || (state.databaseView.nodeId && getNodeById(state.databaseView.nodeId).databaseConfig.flavor) || 'PostgreSQL',
+            field === 'cpu' ? nextValue : state.databaseView.configDraft.cpu,
+            field === 'memory' ? nextValue : state.databaseView.configDraft.memory,
+            state.databaseView.configDraft.instanceSpec,
+          );
         }
 
         return true;
@@ -4298,23 +5282,28 @@
         }
 
         const field = input.dataset.devboxConfigField;
-        state.devboxView.configDraft[field] = input.value;
+        let nextValue = input.value;
+        if (input.type === 'range') {
+          nextValue = devboxSliderValue(field, input.value);
+        }
+
+        state.devboxView.configDraft[field] = nextValue;
         state.devboxView.saveState = 'editing';
         state.devboxView.error = '';
         state.devboxView.info = '';
 
         if (field === 'cpu') {
-          state.devboxView.configDraft.quotaCpu = input.value;
-          state.devboxView.configDraft.usedCpu = estimateUsedCpu(input.value);
+          state.devboxView.configDraft.quotaCpu = nextValue;
+          state.devboxView.configDraft.usedCpu = estimateUsedCpu(nextValue);
         }
 
         if (field === 'memory') {
-          state.devboxView.configDraft.quotaMemory = input.value;
-          state.devboxView.configDraft.usedMemory = estimateUsedMemory(input.value);
+          state.devboxView.configDraft.quotaMemory = nextValue;
+          state.devboxView.configDraft.usedMemory = estimateUsedMemory(nextValue);
         }
 
         if (field === 'diskSize') {
-          state.devboxView.configDraft.diskUsed = estimateUsedDisk(input.value || '50Gi');
+          state.devboxView.configDraft.diskUsed = estimateUsedDisk(nextValue || '50Gi');
         }
 
         return true;
@@ -4372,9 +5361,16 @@
         }
 
         const devboxConfigButton = event.target.closest('[data-devbox-config-action]');
-        if (devboxConfigButton && state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'save') {
-          saveDevboxConfig();
-          return;
+        if (devboxConfigButton) {
+          if (devboxConfigButton.dataset.devboxConfigAction === 'open-domain') {
+            openDomainTarget(devboxConfigButton.dataset.devboxDomain || '');
+            return;
+          }
+
+          if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'save') {
+            saveDevboxConfig();
+            return;
+          }
         }
 
         const entryButton = event.target.closest('[data-entry-config-action]');
@@ -4420,6 +5416,15 @@
     });
 
     window.addEventListener('resize', scheduleEdgeRender);
+    window.addEventListener('pointermove', (event) => {
+      updateLinkGesture(event.pointerId, event.clientX, event.clientY);
+    });
+    window.addEventListener('pointerup', (event) => {
+      finishLinkGesture(event.pointerId, event.clientX, event.clientY);
+    });
+    window.addEventListener('pointercancel', (event) => {
+      cancelLinkGesture(event.pointerId);
+    });
   }
 
   async function handleUserPrompt(input) {
@@ -4675,7 +5680,7 @@
         cpu: String(options.cpu || '1'),
         memory: String(options.memory || '1Gi'),
         envVars: options.envVars || '',
-        startArgs: options.startArgs || '',
+        startArgs: options.startArgs || 'start.sh',
         mountDisk: Boolean(options.mountDisk),
         stateful: Boolean(options.mountDisk),
         diskSize: options.diskSize || '10Gi',
@@ -5366,7 +6371,9 @@
           ${stack.map((item) => renderTemplateBadge(item)).join('')}
           <strong class="node-devbox-owner">${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
         </div>
-        <div class="node-led"></div>
+        <div class="node-devbox-head-side">
+          <span class="node-devbox-template">${escapeHtml(template ? template.name : 'DevBox')}</span>
+        </div>
       </div>
       <div class="node-container-meters">
         ${renderContainerMeter('CPU', current.usedCpu || estimateUsedCpu(current.cpu || '4'), current.cpu || '4', { kind: 'cpu' })}
@@ -5700,6 +6707,7 @@
 
     if (existing) {
       existing.payload.error = '';
+      existing.payload.startArgs = existing.payload.startArgs || 'start.sh';
       renderChat();
       focusAguiField(existing.id, 'image');
       return;
@@ -5708,7 +6716,7 @@
     const message = addAguiMessage('docker-deploy', {
       image: DEFAULT_DEPLOY_IMAGE,
       envVars: 'NODE_ENV=production',
-      startArgs: '',
+      startArgs: 'start.sh',
       cpu: '1',
       memory: '1Gi',
       mountDisk: false,
@@ -5866,61 +6874,65 @@
         <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
           <div class="db-config-header">
             <div>
-              <strong>${escapeHtml(node.title)}</strong>
-              <span>${escapeHtml(database.name)} / ${escapeHtml(node.databaseConfig.flavor)} ${escapeHtml(node.databaseConfig.version)}</span>
+              <strong>${escapeHtml(`${node.title} ${node.databaseConfig.version}`)}</strong>
             </div>
-            <div class="db-chip">${escapeHtml(draft.instanceSpec || node.databaseConfig.instanceSpec)}</div>
           </div>
 
           <section class="db-config-section">
-            <div class="db-config-copy">扩缩容与数据库规格。</div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>Instance</span>
-                <select class="agui-select" data-db-config-field="instanceSpec" ${disabledAttr}>
-                  ${selectOptions(databaseSpecOptions(node.databaseConfig.flavor), draft.instanceSpec || node.databaseConfig.instanceSpec)}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Replicas</span>
-                <select class="agui-select" data-db-config-field="replicas" ${disabledAttr}>
-                  ${selectOptions(['1', '2', '3', '5'], String(draft.replicas || node.databaseConfig.replicas))}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>CPU</span>
-                <select class="agui-select" data-db-config-field="cpu" ${disabledAttr}>
-                  ${selectOptions(['1', '2', '4', '8', '16'], String(draft.cpu || node.databaseConfig.cpu))}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Memory</span>
-                <select class="agui-select" data-db-config-field="memory" ${disabledAttr}>
-                  ${selectOptions(['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'], String(draft.memory || node.databaseConfig.memory))}
-                </select>
-              </label>
+            <div class="db-config-copy">副本与资源。</div>
+            <div class="container-slider-grid container-slider-grid-single">
+              ${renderSliderField({
+                label: '副本',
+                field: 'replicas',
+                valueText: `${String(draft.replicas || node.databaseConfig.replicas)} 副本`,
+                valueIndex: databaseSliderIndex('replicas', String(draft.replicas || node.databaseConfig.replicas)),
+                maxIndex: DATABASE_REPLICA_OPTIONS.length - 1,
+                minLabel: DATABASE_REPLICA_OPTIONS[0],
+                maxLabel: DATABASE_REPLICA_OPTIONS[DATABASE_REPLICA_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-db-config-field',
+              })}
+            </div>
+            <div class="container-slider-grid">
+              ${renderSliderField({
+                label: 'CPU',
+                field: 'cpu',
+                valueText: `${String(draft.cpu || node.databaseConfig.cpu)} Core`,
+                valueIndex: databaseSliderIndex('cpu', String(draft.cpu || node.databaseConfig.cpu)),
+                maxIndex: DATABASE_CPU_OPTIONS.length - 1,
+                minLabel: DATABASE_CPU_OPTIONS[0],
+                maxLabel: DATABASE_CPU_OPTIONS[DATABASE_CPU_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-db-config-field',
+              })}
+              ${renderSliderField({
+                label: '内存',
+                field: 'memory',
+                valueText: String(draft.memory || node.databaseConfig.memory),
+                valueIndex: databaseSliderIndex('memory', String(draft.memory || node.databaseConfig.memory)),
+                maxIndex: DATABASE_MEMORY_OPTIONS.length - 1,
+                minLabel: DATABASE_MEMORY_OPTIONS[0],
+                maxLabel: DATABASE_MEMORY_OPTIONS[DATABASE_MEMORY_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-db-config-field',
+              })}
             </div>
           </section>
 
           <section class="db-config-section">
-            <div class="db-config-copy">存储与备份策略。</div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>Storage</span>
-                <input
-                  class="agui-input"
-                  type="text"
-                  value="${escapeHtml(String(draft.storage || node.databaseConfig.storage))}"
-                  data-db-config-field="storage"
-                  ${disabledAttr}
-                />
-              </label>
-              <label class="db-config-label">
-                <span>Backup</span>
-                <select class="agui-select" data-db-config-field="backupPolicy" ${disabledAttr}>
-                  ${selectOptions(['PITR / Hourly', 'Snapshot / 6h', 'Daily Snapshot'], String(draft.backupPolicy || node.databaseConfig.backupPolicy))}
-                </select>
-              </label>
+            <div class="db-config-copy">存储。</div>
+            <div class="container-slider-grid container-slider-grid-single">
+              ${renderSliderField({
+                label: '存储大小',
+                field: 'storage',
+                valueText: String(draft.storage || node.databaseConfig.storage),
+                valueIndex: databaseSliderIndex('storage', String(draft.storage || node.databaseConfig.storage)),
+                maxIndex: DATABASE_STORAGE_OPTIONS.length - 1,
+                minLabel: DATABASE_STORAGE_OPTIONS[0],
+                maxLabel: DATABASE_STORAGE_OPTIONS[DATABASE_STORAGE_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-db-config-field',
+              })}
             </div>
           </section>
 
@@ -5942,11 +6954,10 @@
     syncContainerNode(node);
     const activeContext = isActiveConfigMessage(message, node.id) ? activeContainerContext() : null;
     const container = node.containerConfig || {};
-    const draft = {
+    const draft = normalizeContainerConfigShape({
       ...container,
       ...(activeContext ? activeContext.view.configDraft || {} : {}),
       image: String((((activeContext && activeContext.view.configDraft) || {}).image || container.image) || '').trim(),
-      replicas: String((((activeContext && activeContext.view.configDraft) || {}).replicas || container.replicas) || '').trim(),
       cpu: String((((activeContext && activeContext.view.configDraft) || {}).cpu || container.cpu) || '').trim(),
       memory: String((((activeContext && activeContext.view.configDraft) || {}).memory || container.memory) || '').trim(),
       envVars: String((((activeContext && activeContext.view.configDraft) || {}).envVars || container.envVars) || '').trim(),
@@ -5958,7 +6969,10 @@
       diskSize: String((((activeContext && activeContext.view.configDraft) || {}).diskSize || container.diskSize) || '').trim(),
       diskUsed: String((((activeContext && activeContext.view.configDraft) || {}).diskUsed || container.diskUsed) || '').trim(),
       mountPath: String((((activeContext && activeContext.view.configDraft) || {}).mountPath || container.mountPath) || '').trim(),
-    };
+      configFiles: normalizeContainerConfigFiles(
+        (((activeContext && activeContext.view.configDraft) || {}).configFiles || container.configFiles),
+      ),
+    });
     const changed = activeContext ? containerConfigChanged(node, draft) : false;
     const statusClass = activeContext
       ? activeContext.view.error
@@ -5987,59 +7001,70 @@
           <div class="db-config-header">
             <div>
               <strong>${escapeHtml(cardTitleForNode(node))}</strong>
-              <span>${escapeHtml(draft.image)}</span>
             </div>
-            <div class="db-chip">${escapeHtml(draft.replicas)} 副本</div>
           </div>
 
           <section class="db-config-section">
-            <div class="db-config-copy">副本数与容器资源。</div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>Replicas</span>
-                <select class="agui-select" data-container-config-field="replicas" ${disabledAttr}>
-                  ${selectOptions(['1', '2', '3', '5'], draft.replicas || '1')}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>CPU</span>
-                <select class="agui-select" data-container-config-field="cpu" ${disabledAttr}>
-                  ${selectOptions(['0.5', '1', '2', '4', '8'], draft.cpu || '1')}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Memory</span>
-                <select class="agui-select" data-container-config-field="memory" ${disabledAttr}>
-                  ${selectOptions(['512Mi', '1Gi', '2Gi', '4Gi', '8Gi', '16Gi'], draft.memory || '1Gi')}
-                </select>
-              </label>
+            <div class="db-config-copy">副本策略</div>
+            <div class="container-mode-switch">
+              <button
+                type="button"
+                class="db-ghost-button container-mode-button ${draft.scalingMode === 'fixed' ? 'active' : ''}"
+                data-container-config-action="set-scaling-mode"
+                data-container-scaling-mode="fixed"
+                ${disabledAttr}
+              >
+                固定副本
+              </button>
+              <button
+                type="button"
+                class="db-ghost-button container-mode-button ${draft.scalingMode === 'elastic' ? 'active' : ''}"
+                data-container-config-action="set-scaling-mode"
+                data-container-scaling-mode="elastic"
+                ${disabledAttr}
+              >
+                弹性伸缩
+              </button>
             </div>
-            <div class="container-runtime-copy">
-              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu), draft.cpu, { kind: 'cpu' })}
-              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory), draft.memory)}
-              ${
-                draft.mountDisk
-                  ? renderContainerMeter(
-                      '磁盘',
-                      draft.diskUsed || estimateUsedDisk(draft.diskSize || '20Gi'),
-                      draft.diskSize || '20Gi',
-                      { kind: 'capacity', icon: 'storage' },
-                    )
-                  : ''
-              }
+            ${renderReplicaRangeField(draft, !activeContext)}
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">CPU / 内存</div>
+            <div class="container-slider-grid">
+              ${renderSliderField({
+                label: 'CPU',
+                field: 'cpu',
+                valueText: `${draft.cpu} Core`,
+                valueIndex: containerSliderIndex('cpu', draft.cpu),
+                maxIndex: CONTAINER_CPU_OPTIONS.length - 1,
+                minLabel: CONTAINER_CPU_OPTIONS[0],
+                maxLabel: CONTAINER_CPU_OPTIONS[CONTAINER_CPU_OPTIONS.length - 1],
+                disabled: !activeContext,
+              })}
+              ${renderSliderField({
+                label: '内存',
+                field: 'memory',
+                valueText: draft.memory,
+                valueIndex: containerSliderIndex('memory', draft.memory),
+                maxIndex: CONTAINER_MEMORY_OPTIONS.length - 1,
+                minLabel: CONTAINER_MEMORY_OPTIONS[0],
+                maxLabel: CONTAINER_MEMORY_OPTIONS[CONTAINER_MEMORY_OPTIONS.length - 1],
+                disabled: !activeContext,
+              })}
             </div>
           </section>
 
           <section class="db-config-section">
-            <div class="db-config-copy">镜像与启动参数。</div>
-            <div class="db-config-grid">
+            <div class="db-config-copy">镜像与 Entrypoint。</div>
+            <div class="container-stack-fields">
               <label class="db-config-label">
                 <span>Image</span>
                 <input class="agui-input" type="text" value="${escapeHtml(draft.image)}" data-container-config-field="image" ${disabledAttr} />
               </label>
               <label class="db-config-label">
-                <span>Start Args</span>
-                <input class="agui-input" type="text" value="${escapeHtml(draft.startArgs)}" data-container-config-field="startArgs" ${disabledAttr} />
+                <span>Entrypoint</span>
+                <input class="agui-input" type="text" value="${escapeHtml(draft.startArgs || 'start.sh')}" data-container-config-field="startArgs" ${disabledAttr} />
               </label>
             </div>
           </section>
@@ -6050,34 +7075,134 @@
           </section>
 
           <section class="db-config-section">
-            <div class="db-config-copy">持久化磁盘。</div>
+            <div class="db-config-copy">自定义磁盘。</div>
             <label class="agui-checkline">
               <input type="checkbox" ${draft.mountDisk ? 'checked' : ''} data-container-config-field="mountDisk" ${disabledAttr} />
               <span>有状态容器，挂载磁盘</span>
             </label>
             ${
               draft.mountDisk
-                ? `<div class="db-config-grid">
-                    <label class="db-config-label">
-                      <span>Disk</span>
-                      <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize)}" data-container-config-field="diskSize" ${disabledAttr} />
-                    </label>
-                    <label class="db-config-label">
-                      <span>Used</span>
-                      <input class="agui-input" type="text" value="${escapeHtml(draft.diskUsed || estimateUsedDisk(draft.diskSize || '20Gi'))}" data-container-config-field="diskUsed" ${disabledAttr} />
-                    </label>
-                    <label class="db-config-label">
-                      <span>Mount Path</span>
-                      <input class="agui-input" type="text" value="${escapeHtml(draft.mountPath)}" data-container-config-field="mountPath" ${disabledAttr} />
-                    </label>
+                ? `<div class="container-slider-grid container-slider-grid-single">
+                    ${renderSliderField({
+                      label: '磁盘大小',
+                      field: 'diskSize',
+                      valueText: draft.diskSize || '20Gi',
+                      valueIndex: containerSliderIndex('diskSize', draft.diskSize || '20Gi'),
+                      maxIndex: CONTAINER_DISK_OPTIONS.length - 1,
+                      minLabel: CONTAINER_DISK_OPTIONS[0],
+                      maxLabel: CONTAINER_DISK_OPTIONS[CONTAINER_DISK_OPTIONS.length - 1],
+                      disabled: !activeContext,
+                    })}
+                  </div>
+                  <label class="db-config-label">
+                    <span>挂载目录</span>
+                    <input class="agui-input" type="text" value="${escapeHtml(draft.mountPath)}" data-container-config-field="mountPath" ${disabledAttr} />
+                  </label>`
+                : '<div class="db-config-copy">未挂载磁盘时，容器将保持无状态运行。</div>'
+            }
+          </section>
+
+          <section class="db-config-section">
+            <div class="container-config-section-head">
+              <div class="db-config-copy">配置文件</div>
+              ${
+                activeContext
+                  ? '<button type="button" class="db-ghost-button" data-container-config-action="add-config-file">新增文件</button>'
+                  : ''
+              }
+            </div>
+            ${
+              draft.configFiles.length
+                ? `<div class="container-config-file-list">
+                    ${draft.configFiles
+                      .map(
+                        (item, index) => `
+                          <div class="container-config-file-item ${item.saved && item.collapsed ? 'collapsed' : ''}">
+                            <div class="container-config-file-head">
+                              <span>
+                                文件 ${index + 1}
+                                ${item.saved ? '<em class="container-config-file-tip">已保存</em>' : ''}
+                              </span>
+                              ${
+                                activeContext
+                                  ? `<div class="container-config-file-actions">
+                                      ${
+                                        item.saved && item.collapsed
+                                          ? `<button
+                                              type="button"
+                                              class="db-ghost-button"
+                                              data-container-config-action="expand-config-file"
+                                              data-container-config-file-index="${index}"
+                                            >
+                                              展开
+                                            </button>`
+                                          : `<button
+                                              type="button"
+                                              class="db-primary-button"
+                                              data-container-config-action="save-config-file"
+                                              data-container-config-file-index="${index}"
+                                            >
+                                              保存
+                                            </button>`
+                                      }
+                                      <button
+                                        type="button"
+                                        class="entry-whitelist-remove"
+                                        data-container-config-action="remove-config-file"
+                                        data-container-config-file-index="${index}"
+                                      >
+                                        删除
+                                      </button>
+                                    </div>`
+                                  : ''
+                              }
+                            </div>
+                            ${
+                              item.saved && item.collapsed
+                                ? `<div class="container-config-file-summary">
+                                    <span>文件路径</span>
+                                    <strong>${escapeHtml(item.path || '-')}</strong>
+                                  </div>`
+                                : `<label class="db-config-label">
+                                    <span>文件路径</span>
+                                    <input
+                                      class="agui-input"
+                                      type="text"
+                                      value="${escapeHtml(item.path || '')}"
+                                      placeholder="/app/config.yaml"
+                                      data-container-config-file-field="path"
+                                      data-container-config-file-index="${index}"
+                                      ${disabledAttr}
+                                    />
+                                  </label>
+                                  <label class="db-config-label">
+                                    <span>配置内容</span>
+                                    <textarea
+                                      class="agui-textarea"
+                                      rows="5"
+                                      placeholder="key: value"
+                                      data-container-config-file-field="content"
+                                      data-container-config-file-index="${index}"
+                                      ${disabledAttr}
+                                    >${escapeHtml(item.content || '')}</textarea>
+                                  </label>`
+                            }
+                          </div>
+                        `,
+                      )
+                      .join('')}
                   </div>`
-                : ''
+                : '<div class="db-config-copy">当前没有配置文件。</div>'
             }
           </section>
 
           <div class="db-config-footer">
             <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
-            ${activeContext ? '<button type="button" class="db-primary-button" data-container-config-action="save">保存配置</button>' : ''}
+            ${
+              activeContext
+                ? '<button type="button" class="db-primary-button" data-container-config-action="save">更新</button>'
+                : ''
+            }
           </div>
         </div>
       </div>
@@ -6210,21 +7335,9 @@
                 draft.whitelist.length
                   ? draft.whitelist
                       .map(
-                        (item, index) => `
+                        (item) => `
                           <div class="entry-whitelist-item">
                             <span>${escapeHtml(item)}</span>
-                            ${
-                              activeContext
-                                ? `<button
-                                    type="button"
-                                    class="entry-whitelist-remove"
-                                    data-entry-config-action="remove-whitelist"
-                                    data-entry-whitelist-index="${index}"
-                                  >
-                                    删除
-                                  </button>`
-                                : ''
-                            }
                           </div>
                         `,
                       )
@@ -6232,20 +7345,6 @@
                   : '<div class="agui-empty">当前没有白名单条目。</div>'
               }
             </div>
-            ${
-              activeContext
-                ? `<div class="entry-whitelist-editor">
-                    <input
-                      class="agui-input"
-                      type="text"
-                      value="${escapeHtml(activeContext.view.whitelistDraft || '')}"
-                      placeholder="203.0.113.24"
-                      data-entry-config-field="whitelistDraft"
-                    />
-                    <button type="button" class="db-primary-button" data-entry-config-action="add-whitelist">添加</button>
-                  </div>`
-                : ''
-            }
           </section>
 
           <div class="db-config-footer">
@@ -6276,7 +7375,7 @@
       port: String((((activeContext && activeContext.view.configDraft) || {}).port || devbox.port) || '').trim(),
     };
     const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
-    const stack = devboxTemplateStack(template);
+    const accessDomain = String((node.details && node.details.access) || '').trim();
     const changed = activeContext ? devboxConfigChanged(node, draft) : false;
     const statusClass = activeContext
       ? activeContext.view.error
@@ -6304,51 +7403,68 @@
         <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
           <div class="db-config-header">
             <div>
-              <strong>${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
-              <span>开发环境</span>
+              <strong>${escapeHtml(`${cardTitleForNode(node) || 'Workspace'} 开发环境`)}</strong>
             </div>
             <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
           </div>
 
           <section class="db-config-section">
-            <div class="db-config-copy">当前工作区模板。</div>
-            <div class="devbox-stack-row">
-              ${stack.map((item) => renderTemplateBadge(item, 'devbox-template-badge')).join('')}
+            <div class="db-config-copy">资源规则。</div>
+            <div class="container-slider-grid">
+              ${renderSliderField({
+                label: 'CPU',
+                field: 'cpu',
+                valueText: `${draft.cpu || '4'} Core`,
+                valueIndex: devboxSliderIndex('cpu', draft.cpu || '4'),
+                maxIndex: DEVBOX_CPU_OPTIONS.length - 1,
+                minLabel: DEVBOX_CPU_OPTIONS[0],
+                maxLabel: DEVBOX_CPU_OPTIONS[DEVBOX_CPU_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-devbox-config-field',
+              })}
+              ${renderSliderField({
+                label: '内存',
+                field: 'memory',
+                valueText: draft.memory || '8Gi',
+                valueIndex: devboxSliderIndex('memory', draft.memory || '8Gi'),
+                maxIndex: DEVBOX_MEMORY_OPTIONS.length - 1,
+                minLabel: DEVBOX_MEMORY_OPTIONS[0],
+                maxLabel: DEVBOX_MEMORY_OPTIONS[DEVBOX_MEMORY_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-devbox-config-field',
+              })}
             </div>
-            <div class="devbox-meta-row">
-              ${draft.version ? `<span class="devbox-meta-chip">v${escapeHtml(draft.version)}</span>` : ''}
+            <div class="container-slider-grid container-slider-grid-single">
+              ${renderSliderField({
+                label: '磁盘',
+                field: 'diskSize',
+                valueText: draft.diskSize || '50Gi',
+                valueIndex: devboxSliderIndex('diskSize', draft.diskSize || '50Gi'),
+                maxIndex: DEVBOX_DISK_OPTIONS.length - 1,
+                minLabel: DEVBOX_DISK_OPTIONS[0],
+                maxLabel: DEVBOX_DISK_OPTIONS[DEVBOX_DISK_OPTIONS.length - 1],
+                disabled: !activeContext,
+                dataFieldAttr: 'data-devbox-config-field',
+              })}
             </div>
           </section>
 
-          <section class="db-config-section">
-            <div class="db-config-copy">资源规格。</div>
-            <div class="container-runtime-copy">
-              ${renderContainerMeter('CPU', draft.usedCpu || estimateUsedCpu(draft.cpu || '4'), draft.cpu || '4', { kind: 'cpu' })}
-              ${renderContainerMeter('内存', draft.usedMemory || estimateUsedMemory(draft.memory || '8Gi'), draft.memory || '8Gi')}
-              ${renderContainerMeter('磁盘', draft.diskUsed || estimateUsedDisk(draft.diskSize || '50Gi'), draft.diskSize || '50Gi', {
-                kind: 'capacity',
-                icon: 'storage',
-              })}
-            </div>
-            <div class="db-config-grid">
-              <label class="db-config-label">
-                <span>CPU</span>
-                <select class="agui-select" data-devbox-config-field="cpu" ${disabledAttr}>
-                  ${selectOptions(['2', '4', '8', '16'], draft.cpu || '4')}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Memory</span>
-                <select class="agui-select" data-devbox-config-field="memory" ${disabledAttr}>
-                  ${selectOptions(['4Gi', '8Gi', '16Gi', '32Gi'], draft.memory || '8Gi')}
-                </select>
-              </label>
-              <label class="db-config-label">
-                <span>Disk</span>
-                <input class="agui-input" type="text" value="${escapeHtml(draft.diskSize || '50Gi')}" data-devbox-config-field="diskSize" ${disabledAttr} />
-              </label>
-            </div>
-          </section>
+          ${
+            accessDomain
+              ? `<section class="db-config-section">
+                  <div class="db-config-copy">服务域名。</div>
+                  <button
+                    type="button"
+                    class="entry-domain-button"
+                    data-devbox-config-action="open-domain"
+                    data-devbox-domain="${escapeHtml(accessDomain)}"
+                  >
+                    <span>Workspace Service</span>
+                    <strong>${escapeHtml(accessDomain)}</strong>
+                  </button>
+                </section>`
+              : ''
+          }
 
           <section class="db-config-section">
             <div class="db-config-copy">启动命令。</div>
@@ -6382,6 +7498,39 @@
     `;
   }
 
+  function renderEnvInjectionMessage(message) {
+    const payload = message.payload || {};
+    const sourceNode = getNodeById(payload.sourceNodeId);
+    const targetNode = getNodeById(payload.targetNodeId);
+    const sourceTitle = sourceNode ? cardTitleForNode(sourceNode) || sourceNode.title : '容器实例';
+    const targetTitle = targetNode ? cardTitleForNode(targetNode) || targetNode.title : '数据库';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">AI</div>
+        <div class="link-injection-card">
+          <div class="link-injection-header">
+            <div>
+              <strong>环境变量注入</strong>
+              <span>${escapeHtml(sourceTitle)} -> ${escapeHtml(targetTitle)}</span>
+            </div>
+            <div class="db-chip">Injected</div>
+          </div>
+          <div class="link-injection-list">
+            <div class="link-injection-row">
+              <span>${escapeHtml(payload.keyLabel || 'databaseUrl')}</span>
+              <strong>${escapeHtml(payload.envKey || 'DATABASE_URL')}</strong>
+            </div>
+            <div class="link-injection-row">
+              <span>${escapeHtml(payload.valueLabel || 'databaseValue')}</span>
+              <code>${escapeHtml(payload.envValue || '')}</code>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
   function renderAguiMessage(message) {
     if (message.ui === 'database-config') {
       return renderDatabaseConfigMessage(message);
@@ -6397,6 +7546,10 @@
 
     if (message.ui === 'devbox-config') {
       return renderDevboxConfigMessage(message);
+    }
+
+    if (message.ui === 'env-injection') {
+      return renderEnvInjectionMessage(message);
     }
 
     if (message.ui === 'project-create') {
@@ -6635,7 +7788,7 @@
     await runImageFlow(`运行 Docker 镜像 ${image}`, {
       image,
       envVars: message.payload.envVars || '',
-      startArgs: message.payload.startArgs || '',
+      startArgs: message.payload.startArgs || 'start.sh',
       cpu: message.payload.cpu || '1',
       memory: message.payload.memory || '1Gi',
       mountDisk: Boolean(message.payload.mountDisk),
@@ -6912,8 +8065,8 @@
                 <input
                   class="agui-input"
                   type="text"
-                  value="${escapeHtml(payload.startArgs || '')}"
-                  placeholder="npm run start -- --port 80"
+                  value="${escapeHtml(payload.startArgs || 'start.sh')}"
+                  placeholder="start.sh"
                   data-agui-field="startArgs"
                   data-message-id="${message.id}"
                 />
