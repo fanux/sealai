@@ -233,6 +233,10 @@ button {
   overflow: hidden;
 }
 
+.canvas-stage.workspace-mode.project-list-mode {
+  overflow: auto;
+}
+
 .canvas-stage.workspace-mode .canvas-world {
   opacity: 0;
   pointer-events: none;
@@ -257,6 +261,124 @@ button {
 .canvas-workspace.active {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
+}
+
+.canvas-workspace.project-workspace {
+  padding: 18px;
+  align-content: start;
+  gap: 18px;
+  overflow: auto;
+}
+
+.project-workspace-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-workspace-copy {
+  min-width: 0;
+}
+
+.project-workspace-title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: 20px;
+  line-height: 1.1;
+  letter-spacing: -0.03em;
+}
+
+.project-workspace-subtitle {
+  margin: 6px 0 0;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 260px));
+  gap: 14px;
+  align-content: start;
+}
+
+.project-overview-card {
+  min-height: 148px;
+  padding: 16px;
+  border: 1px solid var(--line);
+  background: rgba(10, 18, 36, 0.96);
+  color: var(--text);
+  text-align: left;
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.project-overview-card:hover {
+  border-color: var(--line-2);
+  background: rgba(13, 23, 44, 0.98);
+  transform: translateY(-1px);
+}
+
+.project-overview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.project-overview-icon,
+.project-create-icon {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  background: rgba(83, 221, 252, 0.08);
+  color: var(--secondary);
+  font-size: 16px;
+}
+
+.project-overview-status {
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.project-overview-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.project-overview-description {
+  margin: 0;
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.project-create-card {
+  border-style: dashed;
+  background:
+    linear-gradient(180deg, rgba(16, 26, 49, 0.96), rgba(8, 16, 32, 0.98)),
+    rgba(10, 18, 36, 0.96);
+}
+
+.project-create-card strong {
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.project-create-card span:last-child {
+  color: var(--text-soft);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .db-workspace-header {
@@ -1889,6 +2011,80 @@ button {
 .agui-template-copy strong {
   font-size: 12px;
   font-weight: 600;
+}
+
+.project-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.project-mode-option {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+  padding: 10px;
+  border: 1px solid var(--line-2);
+  background: #091328;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease;
+}
+
+.project-mode-option:hover,
+.project-mode-option.active {
+  border-color: var(--primary);
+  background: rgba(18, 31, 58, 0.96);
+}
+
+.project-mode-icon {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--line-2);
+  background: var(--panel);
+  color: var(--text-soft);
+}
+
+.project-mode-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
+  fill: currentColor;
+}
+
+.project-mode-icon.github {
+  color: var(--text);
+}
+
+.project-mode-icon.docker {
+  color: #74c6fc;
+}
+
+.project-mode-icon.vscode {
+  color: #3ea6ff;
+}
+
+.project-mode-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.project-mode-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.project-mode-copy span {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .agui-status.error {

@@ -38,6 +38,51 @@
     },
   ];
 
+  const PROJECT_CREATE_MODES = [
+    {
+      id: 'github',
+      label: 'GitHub 导入',
+      icon: 'github',
+      hint: '从 GitHub 仓库开始配置源码项目。',
+      nextUi: 'github-import',
+    },
+    {
+      id: 'docker',
+      label: 'Docker 镜像',
+      icon: 'docker',
+      hint: '使用现成镜像直接创建运行项目。',
+      nextUi: 'docker-deploy',
+    },
+    {
+      id: 'database',
+      label: '创建数据库',
+      icon: 'database',
+      hint: '先创建数据库型项目或数据服务。',
+      nextUi: 'database-deploy',
+    },
+    {
+      id: 'app',
+      label: '应用市场',
+      icon: 'widgets',
+      hint: '从常见应用模板快速导入。',
+      nextUi: 'app-store',
+    },
+    {
+      id: 'devbox',
+      label: '开发环境',
+      icon: 'vscode',
+      hint: '创建一个可直接连接的 DevBox。',
+      nextUi: 'devbox-deploy',
+    },
+    {
+      id: 'custom',
+      label: '自定义',
+      icon: 'tune',
+      hint: '用自然语言直接描述你的部署需求。',
+      nextUi: 'custom-input',
+    },
+  ];
+
   const APP_LIBRARY = [
     {
       id: 'fastgpt',
@@ -241,11 +286,15 @@
     entryView: null,
     containerView: null,
     devboxView: null,
+    projectListOpen: false,
     suppressClickNodeId: null,
   };
 
   let rafHandle = 0;
   const DEFAULT_CHAT_PLACEHOLDER = '输入 GitHub 仓库、镜像、数据库需求，或让 Agent 修复部署失败';
+  const DEFAULT_DEPLOY_IMAGE = 'agpts';
+  const DEFAULT_DEPLOY_PORT = '80';
+  const AUTO_DOMAIN_SENTINEL = '自动生成';
 
   function createId(prefix) {
     return `${prefix}-${Math.random().toString(36).slice(2, 8)}`;
@@ -276,12 +325,26 @@
     return ['203.0.113.24', '198.51.100.18', '192.0.2.44/32'];
   }
 
+  function isAutoDomainValue(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return (
+      !normalized ||
+      normalized === AUTO_DOMAIN_SENTINEL.toLowerCase() ||
+      normalized === 'auto' ||
+      normalized === 'auto-generated'
+    );
+  }
+
+  function resolveDomainInput(value) {
+    return isAutoDomainValue(value) ? '' : String(value || '').trim();
+  }
+
   function normalizeEntryHealth(value) {
     return String(value || '').toLowerCase() === 'issue' ? 'issue' : 'healthy';
   }
 
   function createEntryConfig(options = {}) {
-    const externalDomain = String(options.externalDomain || options.domain || '').trim();
+    const externalDomain = resolveDomainInput(options.externalDomain || options.domain || '');
     const target = String(options.target || '').trim() || externalDomain || 'Workspace Entry';
 
     return {
@@ -440,7 +503,7 @@
       typeof options.stateful === 'boolean' ? options.stateful : Boolean(options.mountDisk);
 
     return {
-      image: String(options.image || 'registry.local/container:latest').trim(),
+      image: String(options.image || DEFAULT_DEPLOY_IMAGE).trim(),
       replicas: String(options.replicas || '1').trim(),
       cpu,
       memory,
@@ -538,7 +601,7 @@
   }
 
   function defaultDevboxStartCommand(template, port) {
-    const normalizedPort = String(port || (template && template.defaultPort) || '3000').replace(/\/tcp$/i, '');
+    const normalizedPort = String(port || DEFAULT_DEPLOY_PORT).replace(/\/tcp$/i, '');
     const templateId = template && template.id;
 
     if (templateId === 'python') {
@@ -576,7 +639,7 @@
     const cpu = String(options.cpu || '4').trim();
     const memory = String(options.memory || '8Gi').trim();
     const diskSize = String(options.diskSize || '50Gi').trim();
-    const port = String(options.port || (template && template.defaultPort) || '3000')
+    const port = String(options.port || DEFAULT_DEPLOY_PORT)
       .trim()
       .replace(/\/tcp$/i, '');
 
@@ -2244,6 +2307,7 @@
     state.entryView = null;
     state.containerView = null;
     state.devboxView = null;
+    state.projectListOpen = false;
     state.lastIssue = {
       title: 'FastGPT 启动失败',
       reason: '后端实例缺少 `OPENAI_API_KEY`，入口健康检查连续失败。',
@@ -2306,7 +2370,9 @@
   function renderNav() {
     dom.navFilters.innerHTML = FILTERS.map((filter) => {
       const isActive =
-        filter.id === 'projects' && collectProjectNodes().some((node) => node.id === state.selectedNodeId);
+        filter.id === 'projects'
+          ? state.projectListOpen || collectProjectNodes().some((node) => node.id === state.selectedNodeId)
+          : false;
 
       return `
         <button
@@ -2489,6 +2555,7 @@
         const domainTarget = event.target.closest('[data-node-domain]');
         if (domainTarget && node.type === 'entry') {
           state.selectedNodeId = node.id;
+          closeProjectListView();
           closeDatabaseWorkspace();
           closeContainerContext();
           closeDevboxContext();
@@ -2499,6 +2566,7 @@
         }
 
         state.selectedNodeId = node.id;
+        closeProjectListView();
         if (supportsDatabaseWorkspace(node)) {
           openDatabaseWorkspace(node.id);
           closeEntryContext();
@@ -2621,7 +2689,51 @@
     }
 
     const context = activeDatabaseContext();
-    dom.canvasStage.classList.toggle('workspace-mode', Boolean(context));
+    const projectListOpen = Boolean(state.projectListOpen);
+    dom.canvasStage.classList.toggle('workspace-mode', Boolean(context) || projectListOpen);
+    dom.canvasStage.classList.toggle('project-list-mode', projectListOpen && !context);
+
+    if (projectListOpen && !context) {
+      const projects = collectProjectNodes();
+      dom.canvasWorkspace.hidden = false;
+      dom.canvasWorkspace.className = 'canvas-workspace active project-workspace';
+      dom.canvasWorkspace.innerHTML = `
+        <div class="project-workspace-header">
+          <div class="project-workspace-copy">
+            <h2 class="project-workspace-title">项目列表</h2>
+            <p class="project-workspace-subtitle">查看已有项目，或直接创建一个新项目。</p>
+          </div>
+        </div>
+
+        <div class="project-grid">
+          <button type="button" class="project-overview-card project-create-card" data-project-action="create-project">
+            <span class="project-create-icon material-symbols-outlined">add</span>
+            <strong>创建项目</strong>
+            <span>导入 GitHub 仓库并开始部署。</span>
+          </button>
+          ${projects
+            .map(
+              (node) => `
+                <button
+                  type="button"
+                  class="project-overview-card"
+                  data-project-action="open-project"
+                  data-project-node-id="${node.id}"
+                >
+                  <div class="project-overview-head">
+                    <span class="project-overview-icon material-symbols-outlined">${iconForType(node.type)}</span>
+                    <span class="project-overview-status">${escapeHtml(node.status)}</span>
+                  </div>
+                  <strong class="project-overview-title">${escapeHtml(cardTitleForNode(node) || node.title)}</strong>
+                  <p class="project-overview-description">${escapeHtml(projectDescriptionForNode(node))}</p>
+                </button>
+              `,
+            )
+            .join('')}
+        </div>
+      `;
+      return;
+    }
 
     if (!context) {
       dom.canvasWorkspace.hidden = true;
@@ -3541,45 +3653,41 @@
       }
 
       if (button.dataset.railAction === 'projects') {
-        const firstProject = collectProjectNodes()[0] || state.nodes[0];
-        if (firstProject) {
-          state.selectedNodeId = firstProject.id;
-          closeDatabaseWorkspace();
-          closeEntryContext();
-          closeContainerContext();
-          if (supportsDatabaseWorkspace(firstProject)) {
-            openDatabaseWorkspace(firstProject.id);
-          } else if (firstProject.type === 'container') {
-            openContainerContext(firstProject.id);
-          } else if (firstProject.type === 'entry') {
-            openEntryContext(firstProject.id);
-          }
-          renderAll();
-        }
+        closeDatabaseWorkspace();
+        closeEntryContext();
+        closeContainerContext();
+        closeDevboxContext();
+        openProjectListView();
+        renderAll();
         return;
       }
 
       if (button.dataset.railAction === 'github-ui') {
+        closeProjectListView();
         openGithubImportUi();
         return;
       }
 
       if (button.dataset.railAction === 'docker-ui') {
+        closeProjectListView();
         openDockerDeployUi();
         return;
       }
 
       if (button.dataset.railAction === 'database-ui') {
+        closeProjectListView();
         openDatabaseDeployUi();
         return;
       }
 
       if (button.dataset.railAction === 'app-ui') {
+        closeProjectListView();
         openAppStoreUi();
         return;
       }
 
       if (button.dataset.railAction === 'devbox-ui') {
+        closeProjectListView();
         openDevboxDeployUi();
         return;
       }
@@ -3645,6 +3753,13 @@
         return;
       }
 
+      if (message.ui === 'project-create' && button.dataset.aguiAction === 'project-mode-select') {
+        message.payload.mode = button.dataset.projectMode || 'github';
+        message.payload.error = '';
+        continueProjectCreateFromAgui(message.id);
+        return;
+      }
+
       if (message.ui === 'github-import' && button.dataset.aguiAction === 'github-auth') {
         message.payload.authConnected = true;
         message.payload.selectedRepo = 'fanux/sealai';
@@ -3683,7 +3798,7 @@
 
         message.payload.templateId = template.id;
         message.payload.version = defaultDevboxVersion(template);
-        message.payload.port = template.defaultPort;
+        message.payload.port = DEFAULT_DEPLOY_PORT;
         message.payload.error = '';
         renderChat();
         return;
@@ -3701,6 +3816,41 @@
 
     if (dom.canvasWorkspace) {
       dom.canvasWorkspace.addEventListener('click', (event) => {
+        const projectButton = event.target.closest('[data-project-action]');
+        if (projectButton) {
+          if (projectButton.dataset.projectAction === 'create-project') {
+            openProjectCreateUi();
+            return;
+          }
+
+          if (projectButton.dataset.projectAction === 'open-project') {
+            const node = getNodeById(projectButton.dataset.projectNodeId || '');
+            if (!node) {
+              return;
+            }
+
+            state.selectedNodeId = node.id;
+            closeProjectListView();
+            closeDatabaseWorkspace();
+            closeEntryContext();
+            closeContainerContext();
+            closeDevboxContext();
+
+            if (supportsDatabaseWorkspace(node)) {
+              openDatabaseWorkspace(node.id);
+            } else if (node.type === 'container') {
+              openContainerContext(node.id);
+            } else if (node.type === 'entry') {
+              openEntryContext(node.id);
+            } else if (node.type === 'devbox') {
+              openDevboxContext(node.id);
+            }
+
+            renderAll();
+            return;
+          }
+        }
+
         const button = event.target.closest('[data-db-action]');
         if (!button || !state.databaseView) {
           return;
@@ -4098,6 +4248,8 @@
   async function runGithubFlow(input) {
     const url = extractUrl(input) || 'https://github.com/example/project';
     const project = deriveProjectName(url);
+    const domain = `${project}.cloud.sealos.run`;
+    const port = DEFAULT_DEPLOY_PORT;
     const baseX = 180 + Math.floor(Math.random() * 90);
     const baseY = 140 + Math.floor(Math.random() * 120);
 
@@ -4116,7 +4268,7 @@
     state.nodes.push({
       id: entryId,
       type: 'entry',
-      title: `${project}.cloud.sealos.run`,
+      title: domain,
       subtitle: '内网域名 / 外网域名',
       status: 'Accessible',
       tags: [],
@@ -4124,13 +4276,13 @@
       y: baseY - 70,
       details: {
         target: project,
-        externalDomain: `${project}.cloud.sealos.run`,
+        externalDomain: domain,
         internalDomain: `${project}-runtime.region.internal`,
-        cnameHost: `${project}.cloud.sealos.run`,
+        cnameHost: domain,
         cnameTarget: 'gateway.sealos.run',
         whitelist: defaultEntryWhitelist(),
         source: url,
-        route: `指向 ${project}`,
+        route: `${domain} -> ${port}/TCP`,
       },
       operations: ['查看入口', '切换灰度', '复制域名'],
     });
@@ -4146,14 +4298,14 @@
       y: baseY + 40,
       details: {
         image: `registry.local/${project}:latest`,
-        envVars: 'PORT=3000',
+        envVars: `PORT=${port}`,
       },
       containerConfig: {
         image: `registry.local/${project}:latest`,
         replicas: '2',
         cpu: '2',
         memory: '2Gi',
-        envVars: 'PORT=3000',
+        envVars: `PORT=${port}`,
       },
       operations: ['查看日志', '回滚', '扩容'],
     });
@@ -4162,7 +4314,7 @@
       id: createId('edge'),
       from: entryId,
       to: appId,
-      label: '443',
+      label: `${port}/TCP`,
     });
 
     state.selectedNodeId = appId;
@@ -4170,16 +4322,16 @@
       'assistant',
       `部署完成。画布中新增了入口域名和应用实例，你可以继续要求我挂接数据库、补齐环境变量，或修复部署问题。`,
     );
-    pushTimeline('完成部署', `源码已转换为运行实例，并暴露入口 ${project}.cloud.sealos.run。`, 'done');
+    pushTimeline('完成部署', `源码已转换为运行实例，并暴露入口 ${domain}。`, 'done');
     setAgentState(false, '待命');
     renderAll();
   }
 
   async function runImageFlow(input, options = {}) {
-    const image = options.image || extractImage(input) || 'ghcr.io/example/app:latest';
+    const image = options.image || extractImage(input) || DEFAULT_DEPLOY_IMAGE;
     const name = image.split('/').pop().replace(/[:.]/g, '-').slice(0, 18);
-    const domain = (options.domain || '').trim() || `${name}.edge.sealos.run`;
-    const port = String(options.port || inferPortFromInput(input) || '3000');
+    const domain = resolveDomainInput(options.domain) || `${name}.edge.sealos.run`;
+    const port = String(options.port || inferPortFromInput(input) || DEFAULT_DEPLOY_PORT);
     const envSummary = summarizeEnvVars(options.envVars || '');
     const runtimeSummary = summarizeRuntimeOptions(options);
 
@@ -4446,11 +4598,11 @@
     const version = String(options.version || defaultDevboxVersion(template));
     const cpu = String(options.cpu || '2');
     const memory = String(options.memory || '4Gi');
-    const port = String(options.port || template.defaultPort || inferPortFromInput(input) || '3000');
+    const port = String(options.port || inferPortFromInput(input) || DEFAULT_DEPLOY_PORT);
     const owner = randomName();
     const workspaceCode = Math.floor(Math.random() * 900 + 100);
     const domain =
-      String(options.domain || '').trim() || `${template.id}-devbox-${workspaceCode}.cloud.sealos.run`;
+      resolveDomainInput(options.domain) || `${template.id}-devbox-${workspaceCode}.cloud.sealos.run`;
     const entryId = createId('entry');
     const id = createId('devbox');
     const x = 530 + Math.floor(Math.random() * 90);
@@ -5163,14 +5315,57 @@
     return fallbackNodes.slice(0, 6);
   }
 
+  function openProjectListView() {
+    state.projectListOpen = true;
+  }
+
+  function closeProjectListView() {
+    state.projectListOpen = false;
+  }
+
+  function projectDescriptionForNode(node) {
+    if (!node) {
+      return '项目描述待补充。';
+    }
+
+    if (node.type === 'container') {
+      const config = node.containerConfig || syncContainerNode(node).containerConfig;
+      const image = String((config && config.image) || (node.details && node.details.image) || '').trim();
+      return image ? `运行中的容器项目，镜像 ${image}` : '运行中的容器项目。';
+    }
+
+    if (node.type === 'app') {
+      const detail = node.details || {};
+      return (
+        String(detail.config || detail.delivery || detail.bundle || node.subtitle || '').trim() ||
+        '应用模板项目。'
+      );
+    }
+
+    if (node.type === 'devbox') {
+      const detail = node.details || {};
+      return (
+        String(detail.templateName || detail.template || '').trim()
+          ? `开发环境项目，模板 ${detail.templateName || detail.template}`
+          : '开发环境项目。'
+      );
+    }
+
+    if (node.type === 'database') {
+      return '数据库项目。';
+    }
+
+    return String(nodeSummary(node) || node.subtitle || '项目描述待补充。').trim();
+  }
+
   function getMessageById(id) {
     return state.messages.find((message) => message.id === id);
   }
 
-  function openGithubImportUi() {
-    const existing = state.messages.find(
-      (message) => message.kind === 'agui' && message.ui === 'github-import',
-    );
+  function openGithubImportUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'github-import');
 
     if (existing) {
       existing.payload.error = '';
@@ -5190,10 +5385,32 @@
     focusAguiField(message.id, 'urlDraft');
   }
 
-  function openDockerDeployUi() {
-    const existing = state.messages.find(
-      (message) => message.kind === 'agui' && message.ui === 'docker-deploy',
-    );
+  function openProjectCreateUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'project-create');
+
+    if (existing) {
+      existing.payload.error = '';
+      renderChat();
+      focusAguiField(existing.id, 'projectName');
+      return;
+    }
+
+    const message = addAguiMessage('project-create', {
+      projectName: '',
+      projectDescription: '',
+      mode: 'github',
+      error: '',
+      lastMode: '',
+    });
+    focusAguiField(message.id, 'projectName');
+  }
+
+  function openDockerDeployUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'docker-deploy');
 
     if (existing) {
       existing.payload.error = '';
@@ -5203,7 +5420,7 @@
     }
 
     const message = addAguiMessage('docker-deploy', {
-      image: '',
+      image: DEFAULT_DEPLOY_IMAGE,
       envVars: 'NODE_ENV=production',
       startArgs: '',
       cpu: '1',
@@ -5211,8 +5428,8 @@
       mountDisk: false,
       diskSize: '10Gi',
       mountPath: '/data',
-      domain: '',
-      port: '3000',
+      domain: AUTO_DOMAIN_SENTINEL,
+      port: DEFAULT_DEPLOY_PORT,
       deployState: 'idle',
       error: '',
       lastImage: '',
@@ -5220,10 +5437,10 @@
     focusAguiField(message.id, 'image');
   }
 
-  function openDatabaseDeployUi() {
-    const existing = state.messages.find(
-      (message) => message.kind === 'agui' && message.ui === 'database-deploy',
-    );
+  function openDatabaseDeployUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'database-deploy');
 
     if (existing) {
       existing.payload.error = '';
@@ -5243,8 +5460,10 @@
     focusAguiField(message.id, 'dbType');
   }
 
-  function openAppStoreUi() {
-    const existing = state.messages.find((message) => message.kind === 'agui' && message.ui === 'app-store');
+  function openAppStoreUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'app-store');
 
     if (existing) {
       existing.payload.error = '';
@@ -5263,8 +5482,10 @@
     focusAguiField(message.id, 'search');
   }
 
-  function openDevboxDeployUi() {
-    const existing = state.messages.find((message) => message.kind === 'agui' && message.ui === 'devbox-deploy');
+  function openDevboxDeployUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'devbox-deploy');
 
     if (existing) {
       existing.payload.error = '';
@@ -5279,8 +5500,8 @@
       version: defaultDevboxVersion(nextjsTemplate),
       cpu: '2',
       memory: '4Gi',
-      port: nextjsTemplate ? nextjsTemplate.defaultPort : '3000',
-      domain: '',
+      port: DEFAULT_DEPLOY_PORT,
+      domain: AUTO_DOMAIN_SENTINEL,
       deployState: 'idle',
       error: '',
       lastTemplate: '',
@@ -5300,6 +5521,10 @@
   }
 
   function renderAguiMessage(message) {
+    if (message.ui === 'project-create') {
+      return renderProjectCreateCard(message);
+    }
+
     if (message.ui === 'github-import') {
       return renderGithubImportCard(message);
     }
@@ -5321,6 +5546,85 @@
     }
 
     return '';
+  }
+
+  function renderProjectCreateCard(message) {
+    const payload = message.payload || {};
+    const selectedMode =
+      PROJECT_CREATE_MODES.find((item) => item.id === payload.mode) || PROJECT_CREATE_MODES[0];
+    const statusText = payload.error
+      ? payload.error
+      : payload.lastMode
+      ? `已选择 ${selectedMode ? selectedMode.label : payload.lastMode}，继续完善项目配置。`
+      : '填写项目基础信息，并选择要创建的项目场景。';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>创建项目</strong>
+              <span>填写项目名、项目描述，并选择项目的创建方式。</span>
+            </div>
+            <div class="agui-card-pill">Project</div>
+          </div>
+
+          <div class="agui-methods">
+            <section class="agui-method">
+              <div class="agui-method-title">Base Info</div>
+              <div class="agui-method-copy">项目基础信息。</div>
+              <div class="agui-grid agui-grid-2">
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(payload.projectName || '')}"
+                  placeholder="项目名"
+                  data-agui-field="projectName"
+                  data-message-id="${message.id}"
+                />
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(payload.projectDescription || '')}"
+                  placeholder="项目描述"
+                  data-agui-field="projectDescription"
+                  data-message-id="${message.id}"
+                />
+              </div>
+            </section>
+
+            <section class="agui-method">
+              <div class="agui-method-title">Scenario</div>
+              <div class="agui-method-copy">选择项目场景，不使用下拉框，直接点选即可。</div>
+              <div class="project-mode-grid">
+                ${PROJECT_CREATE_MODES.map(
+                  (mode) => `
+                    <button
+                      type="button"
+                      class="project-mode-option ${selectedMode && selectedMode.id === mode.id ? 'active' : ''}"
+                      data-agui-action="project-mode-select"
+                      data-project-mode="${mode.id}"
+                      data-message-id="${message.id}"
+                    >
+                      <span class="project-mode-icon ${mode.icon === 'docker' ? 'docker' : ''} ${mode.icon === 'github' ? 'github' : ''} ${mode.icon === 'vscode' ? 'vscode' : ''}">${iconMarkup(mode.icon)}</span>
+                      <span class="project-mode-copy">
+                        <strong>${escapeHtml(mode.label)}</strong>
+                        <span>${escapeHtml(mode.hint)}</span>
+                      </span>
+                    </button>
+                  `,
+                ).join('')}
+              </div>
+            </section>
+          </div>
+
+          <div class="agui-card-footer">
+            <div class="agui-status ${payload.error ? 'error' : ''}">${escapeHtml(statusText)}</div>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderGithubImportCard(message) {
@@ -5426,6 +5730,7 @@
 
     const image = (message.payload.image || '').trim();
     const port = String(message.payload.port || '').trim();
+    const domain = resolveDomainInput(message.payload.domain);
 
     if (!image) {
       message.payload.error = '请填写 Docker 镜像地址。';
@@ -5458,12 +5763,66 @@
       mountDisk: Boolean(message.payload.mountDisk),
       diskSize: message.payload.diskSize || '10Gi',
       mountPath: message.payload.mountPath || '/data',
-      domain: message.payload.domain || '',
+      domain,
       port,
     });
 
     message.payload.deployState = 'done';
     renderChat();
+  }
+
+  function continueProjectCreateFromAgui(messageId) {
+    const message = getMessageById(messageId);
+    if (!message || message.kind !== 'agui' || message.ui !== 'project-create') {
+      return;
+    }
+
+    const mode = String(message.payload.mode || '').trim();
+    const modeConfig = PROJECT_CREATE_MODES.find((item) => item.id === mode);
+
+    if (!modeConfig) {
+      message.payload.error = '请选择一个项目场景。';
+      renderChat();
+      return;
+    }
+
+    message.payload.error = '';
+    message.payload.lastMode = modeConfig.label;
+    renderChat();
+
+    if (modeConfig.nextUi === 'github-import') {
+      openGithubImportUi({ alwaysNew: true });
+      return;
+    }
+
+    if (modeConfig.nextUi === 'docker-deploy') {
+      openDockerDeployUi({ alwaysNew: true });
+      return;
+    }
+
+    if (modeConfig.nextUi === 'database-deploy') {
+      openDatabaseDeployUi({ alwaysNew: true });
+      return;
+    }
+
+    if (modeConfig.nextUi === 'app-store') {
+      openAppStoreUi({ alwaysNew: true });
+      return;
+    }
+
+    if (modeConfig.nextUi === 'devbox-deploy') {
+      openDevboxDeployUi({ alwaysNew: true });
+      return;
+    }
+
+    if (modeConfig.nextUi === 'custom-input') {
+      dom.chatInput.value = '我想部署：';
+      dom.chatInput.focus();
+      if (typeof dom.chatInput.setSelectionRange === 'function') {
+        const end = dom.chatInput.value.length;
+        dom.chatInput.setSelectionRange(end, end);
+      }
+    }
   }
 
   async function deployDatabaseFromAgui(messageId) {
@@ -5575,7 +5934,7 @@
     const cpu = String(message.payload.cpu || '').trim();
     const memory = String(message.payload.memory || '').trim();
     const port = String(message.payload.port || '').trim();
-    const domain = String(message.payload.domain || '').trim();
+    const domain = resolveDomainInput(message.payload.domain);
 
     if (!template) {
       message.payload.error = '请选择 DevBox 模板。';
@@ -5636,6 +5995,9 @@
 
   function renderDockerDeployCard(message) {
     const payload = message.payload || {};
+    const imageValue = payload.image !== undefined ? payload.image : DEFAULT_DEPLOY_IMAGE;
+    const domainValue = payload.domain !== undefined ? payload.domain : AUTO_DOMAIN_SENTINEL;
+    const portValue = payload.port !== undefined ? payload.port : DEFAULT_DEPLOY_PORT;
     const deployState = payload.deployState || 'idle';
     const statusText =
       deployState === 'deploying'
@@ -5664,8 +6026,8 @@
                 <input
                   class="agui-input"
                   type="text"
-                  value="${escapeHtml(payload.image || '')}"
-                  placeholder="ghcr.io/owner/app:latest"
+                  value="${escapeHtml(imageValue || '')}"
+                  placeholder="${escapeHtml(DEFAULT_DEPLOY_IMAGE)}"
                   data-agui-field="image"
                   data-message-id="${message.id}"
                 />
@@ -5673,7 +6035,7 @@
                   class="agui-input"
                   type="text"
                   value="${escapeHtml(payload.startArgs || '')}"
-                  placeholder="npm run start -- --port 3000"
+                  placeholder="npm run start -- --port 80"
                   data-agui-field="startArgs"
                   data-message-id="${message.id}"
                 />
@@ -5736,16 +6098,16 @@
                 <input
                   class="agui-input"
                   type="text"
-                  value="${escapeHtml(payload.domain || '')}"
-                  placeholder="app.example.com or leave blank for auto domain"
+                  value="${escapeHtml(domainValue || '')}"
+                  placeholder="${escapeHtml(AUTO_DOMAIN_SENTINEL)}"
                   data-agui-field="domain"
                   data-message-id="${message.id}"
                 />
                 <input
                   class="agui-input"
                   type="text"
-                  value="${escapeHtml(payload.port || '3000')}"
-                  placeholder="3000"
+                  value="${escapeHtml(portValue || DEFAULT_DEPLOY_PORT)}"
+                  placeholder="${escapeHtml(DEFAULT_DEPLOY_PORT)}"
                   data-agui-field="port"
                   data-message-id="${message.id}"
                 />
@@ -5864,6 +6226,8 @@
     const payload = message.payload || {};
     const deployState = payload.deployState || 'idle';
     const selectedTemplate = getDevboxTemplateById(payload.templateId) || DEVBOX_TEMPLATES[0];
+    const portValue = payload.port !== undefined ? payload.port : DEFAULT_DEPLOY_PORT;
+    const domainValue = payload.domain !== undefined ? payload.domain : AUTO_DOMAIN_SENTINEL;
     const versionOptions = (selectedTemplate && selectedTemplate.versions) || [];
     const selectedVersion = versionOptions.includes(payload.version)
       ? payload.version
@@ -5941,16 +6305,16 @@
                 <input
                   class="agui-input"
                   type="text"
-                  value="${escapeHtml(payload.port || (selectedTemplate ? selectedTemplate.defaultPort : '3000'))}"
-                  placeholder="${escapeHtml(selectedTemplate ? selectedTemplate.defaultPort : '3000')}"
+                  value="${escapeHtml(portValue || DEFAULT_DEPLOY_PORT)}"
+                  placeholder="${escapeHtml(DEFAULT_DEPLOY_PORT)}"
                   data-agui-field="port"
                   data-message-id="${message.id}"
                 />
                 <input
                   class="agui-input"
                   type="text"
-                  value="${escapeHtml(payload.domain || '')}"
-                  placeholder="devbox.example.com or leave blank for auto domain"
+                  value="${escapeHtml(domainValue || '')}"
+                  placeholder="${escapeHtml(AUTO_DOMAIN_SENTINEL)}"
                   data-agui-field="domain"
                   data-message-id="${message.id}"
                 />
