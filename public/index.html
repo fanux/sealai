@@ -21,7 +21,6 @@
       <header class="app-header">
         <div class="brand-block">
           <strong>SealAI</strong>
-          <span>Region/workspace</span>
         </div>
 
         <div class="header-actions">
@@ -31,6 +30,7 @@
           <button class="header-icon-button" type="button" aria-label="通知" title="通知">
             <span class="material-symbols-outlined">notifications</span>
           </button>
+          <button id="planButton" class="header-plan-button" type="button">Plan</button>
           <button class="header-icon-button" type="button" aria-label="设置" title="设置">
             <span class="material-symbols-outlined">settings</span>
           </button>
@@ -88,6 +88,31 @@
         </aside>
       </div>
     </div>
+
+    <section id="planOverlay" class="plan-overlay" hidden>
+      <div class="plan-backdrop" data-plan-close="true"></div>
+      <div class="plan-panel" role="dialog" aria-modal="true" aria-labelledby="planTitle">
+        <div class="plan-panel-head">
+          <div class="plan-panel-copy">
+            <span class="plan-panel-kicker">Subscription</span>
+            <h2 id="planTitle" class="plan-panel-title">Upgrade Plan</h2>
+          </div>
+          <button class="plan-close-button" type="button" data-plan-close="true" aria-label="关闭">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <div class="plan-offer-bar">
+          <div class="plan-offer-copy">
+            <strong>限时优惠</strong>
+            <span>30 分钟内订阅 Starter，首月 $1，后续 $7；超时后恢复为 $7/月。</span>
+          </div>
+          <div id="planCountdown" class="plan-countdown">30:00</div>
+        </div>
+
+        <div id="planGrid" class="plan-grid"></div>
+      </div>
+    </section>
 
     <script src="./app.js"></script>
   </body>

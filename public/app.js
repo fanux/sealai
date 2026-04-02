@@ -252,6 +252,34 @@
     },
   ];
 
+  const PLAN_OFFER_DURATION_MS = 30 * 60 * 1000;
+  const PLAN_TIERS = [
+    {
+      id: 'starter',
+      name: 'Starter',
+      subtitle: '最小版本，适合个人试用和轻量部署。',
+      monthlyPrice: 7,
+      badge: 'Best Entry',
+      features: ['1 个 Region/workspace', '基础 Agent 对话与部署', '标准容器与数据库资源'],
+    },
+    {
+      id: 'pro',
+      name: 'Pro',
+      subtitle: '适合持续开发和多项目协作。',
+      monthlyPrice: 19,
+      badge: 'Popular',
+      features: ['无限项目卡片与环境编排', '更高并发 Agent 任务', '高级资源配置与扩缩容'],
+    },
+    {
+      id: 'team',
+      name: 'Team',
+      subtitle: '适合团队环境和共享工作区。',
+      monthlyPrice: 49,
+      badge: 'Team',
+      features: ['团队成员协作与共享环境', '通知、审计和集中管理', '优先支持与更高资源上限'],
+    },
+  ];
+
   const dom = {
     navFilters: document.getElementById('navFilters'),
     nodeLayer: document.getElementById('nodeLayer'),
@@ -269,6 +297,10 @@
     agentMode: document.getElementById('agentMode'),
     domainCount: document.getElementById('domainCount'),
     instanceCount: document.getElementById('instanceCount'),
+    planButton: document.getElementById('planButton'),
+    planOverlay: document.getElementById('planOverlay'),
+    planCountdown: document.getElementById('planCountdown'),
+    planGrid: document.getElementById('planGrid'),
   };
 
   const state = {
@@ -292,9 +324,12 @@
     hoveredEdgeId: null,
     selectedEdgeId: null,
     linking: null,
+    planModalOpen: false,
+    planOfferEndsAt: Date.now() + PLAN_OFFER_DURATION_MS,
   };
 
   let rafHandle = 0;
+  let planTickHandle = 0;
   const DEFAULT_CHAT_PLACEHOLDER = '输入 GitHub 仓库、镜像、数据库需求，或让 Agent 修复部署失败';
   const DEFAULT_DEPLOY_IMAGE = 'agpts';
   const DEFAULT_DEPLOY_PORT = '80';
@@ -317,6 +352,55 @@
 
   function wait(ms) {
     return new Promise((resolve) => window.setTimeout(resolve, ms));
+  }
+
+  function remainingPlanOfferMs() {
+    return Math.max(0, Number(state.planOfferEndsAt || 0) - Date.now());
+  }
+
+  function isPlanOfferActive() {
+    return remainingPlanOfferMs() > 0;
+  }
+
+  function formatPlanCountdown(ms) {
+    const totalSeconds = Math.max(0, Math.ceil(ms / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  }
+
+  function planTierPricing(tier) {
+    if (!tier) {
+      return null;
+    }
+
+    if (tier.id === 'starter') {
+      if (isPlanOfferActive()) {
+        return {
+          headline: '$1',
+          subline: '首月',
+          detail: '后续 $7 / 月',
+          note: '30 分钟内完成订阅即可锁定首月 $1 优惠，之后按 $7 / 月续费。',
+          featured: true,
+        };
+      }
+
+      return {
+        headline: '$7',
+        subline: '/ 月',
+        detail: '优惠已结束，已恢复常规价格',
+        note: 'Starter 当前按常规价格计费。',
+        featured: false,
+      };
+    }
+
+    return {
+      headline: `$${tier.monthlyPrice}`,
+      subline: '/ 月',
+      detail: '按月订阅，可随时升级',
+      note: '',
+      featured: false,
+    };
   }
 
   function slugifyText(text) {
@@ -1231,6 +1315,7 @@
   function createDatabaseConfig(flavor, options = {}) {
     const instanceSpec = options.instanceSpec || inferDatabaseInstanceSpec(options.node, flavor);
     const profile = databaseSpecProfile(instanceSpec);
+    const storage = String(options.storage || (flavor === 'PostgreSQL' ? '200Gi' : '100Gi'));
 
     return {
       flavor,
@@ -1241,7 +1326,8 @@
       usedCpu: String(options.usedCpu || estimateUsedCpu(options.cpu || profile.cpu)),
       usedMemory: String(options.usedMemory || estimateUsedMemory(options.memory || profile.memory)),
       replicas: String(options.replicas || inferDatabaseReplicas(options.node, '2')),
-      storage: String(options.storage || (flavor === 'PostgreSQL' ? '200Gi' : '100Gi')),
+      storage,
+      usedStorage: String(options.usedStorage || estimateUsedDisk(storage)),
       backupPolicy: String(
         options.backupPolicy ||
           ((options.node && options.node.details && options.node.details.backup) || 'PITR / Hourly')
@@ -1502,6 +1588,7 @@
       runtime: `${nextConfig.cpu} CPU / ${nextConfig.memory} RAM`,
       version: nextConfig.version,
       storage: nextConfig.storage,
+      usedStorage: nextConfig.usedStorage,
       replicas: `${nextConfig.replicas} 副本`,
       usedCpu: nextConfig.usedCpu,
       usedMemory: nextConfig.usedMemory,
@@ -2167,6 +2254,7 @@
       ...draft,
       usedCpu: estimateUsedCpu(draft.cpu || node.databaseConfig.cpu),
       usedMemory: estimateUsedMemory(draft.memory || node.databaseConfig.memory),
+      usedStorage: estimateUsedDisk(draft.storage || node.databaseConfig.storage),
     };
     syncDatabaseNode(node);
     state.databaseView.configDraft = { ...node.databaseConfig };
@@ -3017,6 +3105,7 @@
     state.devboxView = null;
     state.projectListOpen = false;
     state.linking = null;
+    state.planModalOpen = false;
     state.lastIssue = {
       title: 'FastGPT 启动失败',
       reason: '后端实例缺少 `OPENAI_API_KEY`，入口健康检查连续失败。',
@@ -3409,6 +3498,64 @@
     return state.nodes.find((node) => node.id === id);
   }
 
+  function openPlanOverlay() {
+    state.planModalOpen = true;
+    renderPlanOverlay();
+  }
+
+  function closePlanOverlay() {
+    if (!state.planModalOpen) {
+      return;
+    }
+
+    state.planModalOpen = false;
+    renderPlanOverlay();
+  }
+
+  function renderPlanOverlay() {
+    if (!dom.planOverlay || !dom.planGrid || !dom.planCountdown) {
+      return;
+    }
+
+    dom.planOverlay.hidden = !state.planModalOpen;
+    if (!state.planModalOpen) {
+      return;
+    }
+
+    const remainingMs = remainingPlanOfferMs();
+    dom.planCountdown.textContent = formatPlanCountdown(remainingMs);
+    dom.planGrid.innerHTML = PLAN_TIERS.map((tier) => {
+      const pricing = planTierPricing(tier);
+      return `
+        <article class="plan-card ${pricing.featured ? 'featured' : ''}">
+          <div class="plan-card-head">
+            <div>
+              <h3 class="plan-card-name">${escapeHtml(tier.name)}</h3>
+              <p class="plan-card-subtitle">${escapeHtml(tier.subtitle)}</p>
+            </div>
+            <span class="plan-card-badge">${escapeHtml(tier.badge)}</span>
+          </div>
+
+          <div class="plan-card-price">
+            <strong>${escapeHtml(pricing.headline)}</strong>
+            <span>${escapeHtml(pricing.subline)}</span>
+            <span>${escapeHtml(pricing.detail)}</span>
+          </div>
+
+          ${pricing.note ? `<div class="plan-card-note">${escapeHtml(pricing.note)}</div>` : ''}
+
+          <ul class="plan-card-features">
+            ${tier.features.map((feature) => `<li>${escapeHtml(feature)}</li>`).join('')}
+          </ul>
+
+          <button class="plan-card-action" type="button" data-plan-select="${tier.id}">
+            Subscribe
+          </button>
+        </article>
+      `;
+    }).join('');
+  }
+
   function renderNav() {
     dom.navFilters.innerHTML = FILTERS.map((filter) => {
       const isActive =
@@ -3584,6 +3731,10 @@
               <div class="node-database-meters">
                 ${renderContainerMeter('CPU', databaseConfig.usedCpu || estimateUsedCpu(databaseConfig.cpu), databaseConfig.cpu, { kind: 'cpu' })}
                 ${renderContainerMeter('内存', databaseConfig.usedMemory || estimateUsedMemory(databaseConfig.memory), databaseConfig.memory)}
+                ${renderContainerMeter('磁盘', databaseConfig.usedStorage || estimateUsedDisk(databaseConfig.storage), databaseConfig.storage, {
+                  kind: 'capacity',
+                  icon: 'storage',
+                })}
               </div>
               <div class="node-db-connect">
                 <span class="node-container-label">连接地址</span>
@@ -5060,6 +5211,7 @@
     renderCanvasWorkspace();
     renderSidebarContext();
     renderChat();
+    renderPlanOverlay();
     setAgentState(state.agentBusy, state.currentTask);
   }
 
@@ -5090,6 +5242,41 @@
         }
       }
     };
+
+    if (dom.planButton) {
+      dom.planButton.addEventListener('click', () => {
+        openPlanOverlay();
+      });
+    }
+
+    if (dom.planOverlay) {
+      dom.planOverlay.addEventListener('click', (event) => {
+        const closeTarget = event.target.closest('[data-plan-close]');
+        if (closeTarget) {
+          closePlanOverlay();
+          return;
+        }
+
+        const subscribeTarget = event.target.closest('[data-plan-select]');
+        if (!subscribeTarget) {
+          return;
+        }
+
+        const tier = PLAN_TIERS.find((item) => item.id === subscribeTarget.dataset.planSelect);
+        if (!tier) {
+          return;
+        }
+
+        const pricing = planTierPricing(tier);
+        addMessage(
+          'assistant',
+          tier.id === 'starter' && isPlanOfferActive()
+            ? `已选择 ${tier.name}。当前优惠有效，首月 ${pricing.headline}，后续 $7 / 月。`
+            : `已选择 ${tier.name}。当前价格为 ${pricing.headline}${pricing.subline}。`,
+        );
+        closePlanOverlay();
+      });
+    }
 
     dom.navFilters.addEventListener('click', (event) => {
       const button = event.target.closest('[data-rail-action]');
@@ -5821,6 +6008,10 @@
     }
 
     const handleEdgeDeleteKey = (event) => {
+      if (state.planModalOpen) {
+        return;
+      }
+
       const activeEdgeId = state.selectedEdgeId || state.hoveredEdgeId;
       if (!activeEdgeId || !['Delete', 'Backspace'].includes(event.key)) {
         return;
@@ -5843,7 +6034,22 @@
     window.addEventListener('pointercancel', (event) => {
       cancelLinkGesture(event.pointerId);
     });
+    window.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && state.planModalOpen) {
+        closePlanOverlay();
+      }
+    });
     document.addEventListener('keydown', handleEdgeDeleteKey, true);
+
+    if (!planTickHandle) {
+      planTickHandle = window.setInterval(() => {
+        if (!state.planModalOpen && !isPlanOfferActive()) {
+          return;
+        }
+
+        renderPlanOverlay();
+      }, 1000);
+    }
   }
 
   async function handleUserPrompt(input) {
