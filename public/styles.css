@@ -1494,6 +1494,15 @@ button {
   fill: none;
   stroke: rgba(152, 160, 255, 0.14);
   stroke-width: 2;
+  pointer-events: none;
+}
+
+.edge-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
 }
 
 .edge-line {
@@ -1501,27 +1510,38 @@ button {
   stroke: rgba(83, 221, 252, 0.75);
   stroke-width: 2;
   stroke-dasharray: 10 8;
-  marker-end: url(#edge-arrow);
   animation: dash 18s linear infinite;
+  pointer-events: none;
 }
 
 .edge-line.highlight {
   stroke: var(--primary);
 }
 
+.edge-line.hovered {
+  stroke: rgba(123, 235, 255, 0.88);
+  stroke-width: 2.4;
+  stroke-dasharray: none;
+  animation: none;
+}
+
+.edge-line.selected {
+  stroke: rgba(123, 235, 255, 0.92);
+  stroke-width: 2.4;
+  stroke-dasharray: none;
+  animation: none;
+}
+
 .edge-line.preview {
   stroke: rgba(255, 255, 255, 0.72);
   stroke-dasharray: 6 6;
   animation: none;
+  pointer-events: none;
 }
 
-.edge-label {
-  fill: var(--text-soft);
-  font: 10px var(--font-mono);
-  paint-order: stroke;
-  stroke: rgba(7, 17, 34, 0.98);
-  stroke-width: 6px;
-  stroke-linejoin: round;
+.edge-group.hovered .edge-line-back,
+.edge-group.selected .edge-line-back {
+  stroke: rgba(123, 235, 255, 0.2);
 }
 
 .node-card {
@@ -1546,8 +1566,6 @@ button {
 
 .node-link-handle {
   position: absolute;
-  top: -9px;
-  left: 50%;
   width: 16px;
   height: 16px;
   display: inline-flex;
@@ -1563,6 +1581,31 @@ button {
   cursor: crosshair;
   transition: opacity 140ms ease, border-color 140ms ease, color 140ms ease;
   touch-action: none;
+  z-index: 3;
+}
+
+.node-link-handle[data-node-link-side='top'] {
+  top: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.node-link-handle[data-node-link-side='right'] {
+  top: 50%;
+  right: -9px;
+  transform: translateY(-50%);
+}
+
+.node-link-handle[data-node-link-side='bottom'] {
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.node-link-handle[data-node-link-side='left'] {
+  top: 50%;
+  left: -9px;
+  transform: translateY(-50%);
 }
 
 .node-link-handle:hover {

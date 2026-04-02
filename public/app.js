@@ -289,7 +289,8 @@
     projectListOpen: false,
     suppressClickNodeId: null,
     activeConfigMessageId: null,
-    linkingPending: null,
+    hoveredEdgeId: null,
+    selectedEdgeId: null,
     linking: null,
   };
 
@@ -3001,14 +3002,13 @@
 
   function resetState() {
     const initial = getInitialGraph();
-    if (state.linkingPending && state.linkingPending.timerId) {
-      window.clearTimeout(state.linkingPending.timerId);
-    }
     state.nodes = initial.nodes.map((node) => hydrateNode(node));
     state.edges = initial.edges;
     state.messages = initial.messages;
     state.timeline = initial.timeline;
     state.selectedNodeId = initial.selectedNodeId;
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
     state.agentBusy = false;
     state.currentTask = '待命';
     state.databaseView = null;
@@ -3016,7 +3016,6 @@
     state.containerView = null;
     state.devboxView = null;
     state.projectListOpen = false;
-    state.linkingPending = null;
     state.linking = null;
     state.lastIssue = {
       title: 'FastGPT 启动失败',
@@ -3097,8 +3096,28 @@
     return nextLines.join('\n');
   }
 
+  function removeEnvVarText(envText, key) {
+    const normalizedKey = String(key || '').trim();
+    if (!normalizedKey) {
+      return String(envText || '').trim();
+    }
+
+    const prefix = `${normalizedKey}=`;
+    return String(envText || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line && !line.startsWith(prefix))
+      .join('\n');
+  }
+
   function getEdgeByNodes(fromId, toId) {
-    return state.edges.find((edge) => edge.from === fromId && edge.to === toId) || null;
+    return (
+      state.edges.find(
+        (edge) =>
+          (edge.from === fromId && edge.to === toId) ||
+          (edge.from === toId && edge.to === fromId),
+      ) || null
+    );
   }
 
   function normalizeConnectionPair(sourceNode, targetNode) {
@@ -3136,15 +3155,73 @@
       return databaseConnectionLabel((toNode.databaseConfig && toNode.databaseConfig.flavor) || databaseFlavorFromNode(toNode));
     }
 
-    if (fromNode.type === 'entry') {
+    if (sourceNode.type === 'entry' || targetNode.type === 'entry') {
       return 'Route';
     }
 
-    if (fromNode.type === 'devbox') {
+    if (sourceNode.type === 'devbox' || targetNode.type === 'devbox') {
       return 'Workspace';
     }
 
     return 'Link';
+  }
+
+  function removeDatabaseEnvFromContainer(containerNode, databaseNode) {
+    if (!containerNode || !databaseNode || containerNode.type !== 'container' || databaseNode.type !== 'database') {
+      return;
+    }
+
+    syncContainerNode(containerNode);
+    syncDatabaseNode(databaseNode);
+
+    const envKey = databaseConnectionLabel(
+      (databaseNode.databaseConfig && databaseNode.databaseConfig.flavor) || databaseFlavorFromNode(databaseNode),
+    );
+    if (!envKey) {
+      return;
+    }
+
+    const replacementPair = state.edges
+      .map((edge) => normalizeConnectionPair(getNodeById(edge.from), getNodeById(edge.to)))
+      .find((pair) => {
+        if (!pair || pair.fromNode.id !== containerNode.id || pair.toNode.type !== 'database') {
+          return false;
+        }
+
+        const pairKey = databaseConnectionLabel(
+          (pair.toNode.databaseConfig && pair.toNode.databaseConfig.flavor) || databaseFlavorFromNode(pair.toNode),
+        );
+        return pairKey === envKey;
+      });
+    const replacementValue = replacementPair ? String((replacementPair.toNode.details && replacementPair.toNode.details.connect) || '').trim() : '';
+    const nextEnvVars = replacementValue
+      ? upsertEnvVarText((containerNode.containerConfig && containerNode.containerConfig.envVars) || '', envKey, replacementValue)
+      : removeEnvVarText((containerNode.containerConfig && containerNode.containerConfig.envVars) || '', envKey);
+
+    containerNode.containerConfig = {
+      ...containerNode.containerConfig,
+      envVars: nextEnvVars,
+    };
+    syncContainerNode(containerNode);
+
+    if (state.containerView && state.containerView.nodeId === containerNode.id) {
+      const viewEnvVars = replacementValue
+        ? upsertEnvVarText(
+            (state.containerView.configDraft && state.containerView.configDraft.envVars) || containerNode.containerConfig.envVars || '',
+            envKey,
+            replacementValue,
+          )
+        : removeEnvVarText(
+            (state.containerView.configDraft && state.containerView.configDraft.envVars) || containerNode.containerConfig.envVars || '',
+            envKey,
+          );
+      state.containerView.configDraft = {
+        ...(state.containerView.configDraft || {}),
+        envVars: viewEnvVars,
+      };
+      state.containerView.info = replacementValue ? `${envKey} 已切换` : `${envKey} 已移除`;
+      state.containerView.error = '';
+    }
   }
 
   function injectDatabaseEnvIntoContainer(containerNode, databaseNode) {
@@ -3192,39 +3269,59 @@
     };
   }
 
-  function createNodeConnection(sourceNodeId, targetNodeId) {
+  function createNodeConnection(sourceNodeId, targetNodeId, options = {}) {
     const sourceNode = getNodeById(sourceNodeId);
     const targetNode = getNodeById(targetNodeId);
     if (!sourceNode || !targetNode || sourceNode.id === targetNode.id) {
       return;
     }
 
-    const normalized = normalizeConnectionPair(sourceNode, targetNode);
-    if (!normalized) {
-      return;
-    }
-
-    const label = connectionLabelForNodes(normalized.fromNode, normalized.toNode);
-    const existing = getEdgeByNodes(normalized.fromNode.id, normalized.toNode.id);
+    const label = connectionLabelForNodes(sourceNode, targetNode);
+    const existing = getEdgeByNodes(sourceNode.id, targetNode.id);
     if (existing) {
+      existing.from = sourceNode.id;
+      existing.to = targetNode.id;
       existing.label = label;
+      existing.fromSide = options.fromSide || existing.fromSide || '';
+      existing.toSide = options.toSide || existing.toSide || '';
     } else {
       state.edges.push({
         id: createId('edge'),
-        from: normalized.fromNode.id,
-        to: normalized.toNode.id,
+        from: sourceNode.id,
+        to: targetNode.id,
         label,
+        fromSide: options.fromSide || '',
+        toSide: options.toSide || '',
       });
     }
 
-    const injectionPayload = injectDatabaseEnvIntoContainer(normalized.fromNode, normalized.toNode);
+    const normalized = normalizeConnectionPair(sourceNode, targetNode);
+    const injectionPayload = normalized ? injectDatabaseEnvIntoContainer(normalized.fromNode, normalized.toNode) : null;
     if (injectionPayload) {
       addAguiMessage('env-injection', injectionPayload);
     } else {
       addMessage(
         'assistant',
-        `已建立连线：${cardTitleForNode(normalized.fromNode) || normalized.fromNode.title} -> ${cardTitleForNode(normalized.toNode) || normalized.toNode.title}。`,
+        `已建立连线：${cardTitleForNode(sourceNode) || sourceNode.title} -> ${cardTitleForNode(targetNode) || targetNode.title}。`,
       );
+    }
+
+    state.selectedEdgeId = (existing && existing.id) || state.edges[state.edges.length - 1].id;
+  }
+
+  function removeNodeConnection(edgeId) {
+    const edgeIndex = state.edges.findIndex((edge) => edge.id === edgeId);
+    if (edgeIndex === -1) {
+      return;
+    }
+
+    const [edge] = state.edges.splice(edgeIndex, 1);
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
+
+    const normalized = normalizeConnectionPair(getNodeById(edge.from), getNodeById(edge.to));
+    if (normalized && normalized.fromNode.type === 'container' && normalized.toNode.type === 'database') {
+      removeDatabaseEnvFromContainer(normalized.fromNode, normalized.toNode);
     }
   }
 
@@ -3465,7 +3562,18 @@
       card.style.left = `${node.x}px`;
       card.style.top = `${node.y}px`;
       card.innerHTML = `
-        <span class="node-link-handle" data-node-link-handle="true" aria-hidden="true">+</span>
+        ${['top', 'right', 'bottom', 'left']
+          .map(
+            (side) => `
+              <span
+                class="node-link-handle"
+                data-node-link-handle="true"
+                data-node-link-side="${side}"
+                aria-hidden="true"
+              >+</span>
+            `,
+          )
+          .join('')}
         ${badgeMarkup}
         ${
           headingMarkup || topIndicators
@@ -3505,6 +3613,8 @@
         const domainTarget = event.target.closest('[data-node-domain]');
         if (domainTarget && node.type === 'entry') {
           state.selectedNodeId = node.id;
+          state.hoveredEdgeId = null;
+          state.selectedEdgeId = null;
           closeProjectListView();
           closeDatabaseWorkspace();
           closeContainerContext();
@@ -3517,6 +3627,8 @@
         }
 
         state.selectedNodeId = node.id;
+        state.hoveredEdgeId = null;
+        state.selectedEdgeId = null;
         closeProjectListView();
         if (supportsDatabaseWorkspace(node)) {
           openDatabaseWorkspace(node.id);
@@ -3556,7 +3668,14 @@
 
         if (event.target.closest('[data-node-link-handle]')) {
           event.preventDefault();
-          beginLinkGesture(node.id, event.pointerId, event.clientX, event.clientY);
+          event.stopPropagation();
+          beginLinkGesture(
+            node.id,
+            event.target.closest('[data-node-link-handle]').dataset.nodeLinkSide || 'right',
+            event.pointerId,
+            event.clientX,
+            event.clientY,
+          );
           return;
         }
 
@@ -4414,134 +4533,282 @@
     return String(value);
   }
 
-  function edgeAnchorPoint(element, stageRect, mode = 'center') {
+  function normalizeEdgeSide(side) {
+    return ['top', 'right', 'bottom', 'left'].includes(side) ? side : 'right';
+  }
+
+  function oppositeEdgeSide(side) {
+    return {
+      top: 'bottom',
+      right: 'left',
+      bottom: 'top',
+      left: 'right',
+    }[normalizeEdgeSide(side)];
+  }
+
+  function edgeDirectionVector(side) {
+    return {
+      top: { x: 0, y: -1 },
+      right: { x: 1, y: 0 },
+      bottom: { x: 0, y: 1 },
+      left: { x: -1, y: 0 },
+    }[normalizeEdgeSide(side)];
+  }
+
+  function resolveEdgeCurve(start, end, startSide = 'right', endSide = 'left') {
+    const startVector = edgeDirectionVector(startSide);
+    const endVector = edgeDirectionVector(endSide);
+    const distance = Math.hypot(end.x - start.x, end.y - start.y);
+    const offset = Math.max(42, Math.min(132, distance * 0.36));
+    const controlStart = {
+      x: start.x + startVector.x * offset,
+      y: start.y + startVector.y * offset,
+    };
+    const controlEnd = {
+      x: end.x + endVector.x * offset,
+      y: end.y + endVector.y * offset,
+    };
+
+    return {
+      controlStart,
+      controlEnd,
+      path: `M ${start.x} ${start.y} C ${controlStart.x} ${controlStart.y}, ${controlEnd.x} ${controlEnd.y}, ${end.x} ${end.y}`,
+    };
+  }
+
+  function cubicBezierPoint(p0, p1, p2, p3, t) {
+    const u = 1 - t;
+    const tt = t * t;
+    const uu = u * u;
+    const uuu = uu * u;
+    const ttt = tt * t;
+
+    return {
+      x: uuu * p0.x + 3 * uu * t * p1.x + 3 * u * tt * p2.x + ttt * p3.x,
+      y: uuu * p0.y + 3 * uu * t * p1.y + 3 * u * tt * p2.y + ttt * p3.y,
+    };
+  }
+
+  function edgeAnchorPoint(element, stageRect, side = 'right') {
     const rect = element.getBoundingClientRect();
-    if (mode === 'top') {
+    const normalizedSide = normalizeEdgeSide(side);
+
+    if (normalizedSide === 'top') {
       return {
         x: rect.left - stageRect.left + rect.width / 2,
         y: rect.top - stageRect.top,
       };
     }
 
+    if (normalizedSide === 'bottom') {
+      return {
+        x: rect.left - stageRect.left + rect.width / 2,
+        y: rect.bottom - stageRect.top,
+      };
+    }
+
+    if (normalizedSide === 'left') {
+      return {
+        x: rect.left - stageRect.left,
+        y: rect.top - stageRect.top + rect.height / 2,
+      };
+    }
+
     return {
-      x: rect.left - stageRect.left + rect.width / 2,
+      x: rect.right - stageRect.left,
       y: rect.top - stageRect.top + rect.height / 2,
     };
   }
 
-  function edgePathForPoints(start, end) {
-    const delta = Math.abs(end.x - start.x);
-    const curvature = Math.max(48, delta * 0.32);
-    return `M ${start.x} ${start.y} C ${start.x + curvature} ${start.y}, ${end.x - curvature} ${end.y}, ${end.x} ${end.y}`;
+  function edgePathForPoints(start, end, startSide = 'right', endSide = 'left') {
+    return resolveEdgeCurve(start, end, startSide, endSide).path;
   }
 
-  function nodeCardFromPoint(clientX, clientY) {
-    const target = document.elementFromPoint(clientX, clientY);
-    const card = target && target.closest ? target.closest('[data-node-id]') : null;
-    return card || null;
+  function edgeLabelPoint(start, end, startSide = 'right', endSide = 'left') {
+    const curve = resolveEdgeCurve(start, end, startSide, endSide);
+    const point = cubicBezierPoint(start, curve.controlStart, curve.controlEnd, end, 0.5);
+    return {
+      x: point.x,
+      y: point.y - 8,
+    };
   }
 
-  function cancelPendingLink() {
-    if (state.linkingPending && state.linkingPending.timerId) {
-      window.clearTimeout(state.linkingPending.timerId);
+  function elementsAtPoint(clientX, clientY) {
+    if (document.elementsFromPoint) {
+      return document.elementsFromPoint(clientX, clientY);
     }
-    state.linkingPending = null;
+
+    const single = document.elementFromPoint(clientX, clientY);
+    return single ? [single] : [];
   }
 
-  function activatePendingLink() {
-    if (!state.linkingPending) {
+  function edgeHitFromPoint(clientX, clientY) {
+    return (
+      elementsAtPoint(clientX, clientY).find(
+        (element) => element && element.matches && element.matches('[data-edge-hit]'),
+      ) || null
+    );
+  }
+
+  function updateHoveredEdge(clientX, clientY) {
+    const edgeTarget = edgeHitFromPoint(clientX, clientY);
+    const nextHoveredEdgeId = edgeTarget ? edgeTarget.dataset.edgeHit || null : null;
+    if (state.hoveredEdgeId === nextHoveredEdgeId) {
       return;
     }
 
-    const pending = state.linkingPending;
-    state.linkingPending = null;
-    suppressNodeClickOnce(pending.sourceNodeId);
-    const targetCard = nodeCardFromPoint(pending.currentX, pending.currentY);
+    state.hoveredEdgeId = nextHoveredEdgeId;
+    scheduleEdgeRender();
+  }
+
+  function nodeHandleFromPoint(clientX, clientY) {
+    return (
+      elementsAtPoint(clientX, clientY).find(
+        (element) => element && element.matches && element.matches('[data-node-link-handle]'),
+      ) || null
+    );
+  }
+
+  function nodeCardFromPoint(clientX, clientY) {
+    return (
+      elementsAtPoint(clientX, clientY)
+        .map((element) => (element && element.closest ? element.closest('[data-node-id]') : null))
+        .find(Boolean) || null
+    );
+  }
+
+  function closestCardSide(card, clientX, clientY) {
+    if (!card) {
+      return 'right';
+    }
+
+    const rect = card.getBoundingClientRect();
+    const distances = [
+      { side: 'top', value: Math.abs(clientY - rect.top) },
+      { side: 'right', value: Math.abs(rect.right - clientX) },
+      { side: 'bottom', value: Math.abs(rect.bottom - clientY) },
+      { side: 'left', value: Math.abs(clientX - rect.left) },
+    ];
+
+    distances.sort((left, right) => left.value - right.value);
+    return distances[0].side;
+  }
+
+  function resolveLinkTarget(sourceNodeId, clientX, clientY) {
+    const handle = nodeHandleFromPoint(clientX, clientY);
+    const handleNode = handle && handle.closest ? handle.closest('[data-node-id]') : null;
+    if (handleNode && handleNode.dataset.nodeId !== sourceNodeId) {
+      return {
+        targetNodeId: handleNode.dataset.nodeId || '',
+        targetSide: normalizeEdgeSide(handle.dataset.nodeLinkSide || 'left'),
+      };
+    }
+
+    const card = nodeCardFromPoint(clientX, clientY);
+    if (!card || card.dataset.nodeId === sourceNodeId) {
+      return null;
+    }
+
+    return {
+      targetNodeId: card.dataset.nodeId || '',
+      targetSide: closestCardSide(card, clientX, clientY),
+    };
+  }
+
+  function inferEdgeSide(fromEl, toEl) {
+    const fromRect = fromEl.getBoundingClientRect();
+    const toRect = toEl.getBoundingClientRect();
+    const fromCenterX = fromRect.left + fromRect.width / 2;
+    const fromCenterY = fromRect.top + fromRect.height / 2;
+    const toCenterX = toRect.left + toRect.width / 2;
+    const toCenterY = toRect.top + toRect.height / 2;
+    const deltaX = toCenterX - fromCenterX;
+    const deltaY = toCenterY - fromCenterY;
+
+    if (Math.abs(deltaX) >= Math.abs(deltaY)) {
+      return deltaX >= 0 ? 'right' : 'left';
+    }
+
+    return deltaY >= 0 ? 'bottom' : 'top';
+  }
+
+  function resolveEdgeSides(edge, fromEl, toEl) {
+    const fromSide = edge.fromSide ? normalizeEdgeSide(edge.fromSide) : inferEdgeSide(fromEl, toEl);
+    const toSide = edge.toSide ? normalizeEdgeSide(edge.toSide) : inferEdgeSide(toEl, fromEl);
+    return {
+      fromSide,
+      toSide,
+    };
+  }
+
+  function beginLinkGesture(sourceNodeId, sourceSide, pointerId, clientX, clientY) {
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
     state.linking = {
-      sourceNodeId: pending.sourceNodeId,
-      pointerId: pending.pointerId,
-      currentX: pending.currentX,
-      currentY: pending.currentY,
-      targetNodeId:
-        targetCard && targetCard.dataset.nodeId !== pending.sourceNodeId ? targetCard.dataset.nodeId || '' : '',
+      sourceNodeId,
+      sourceSide: normalizeEdgeSide(sourceSide),
+      pointerId,
+      currentX: clientX,
+      currentY: clientY,
+      targetNodeId: '',
+      targetSide: '',
     };
     scheduleEdgeRender();
   }
 
-  function beginLinkGesture(sourceNodeId, pointerId, clientX, clientY) {
-    cancelPendingLink();
-    state.linking = null;
-    state.linkingPending = {
-      sourceNodeId,
-      pointerId,
-      currentX: clientX,
-      currentY: clientY,
-      timerId: window.setTimeout(activatePendingLink, 240),
-    };
-  }
-
   function updateLinkGesture(pointerId, clientX, clientY) {
-    if (state.linkingPending && state.linkingPending.pointerId === pointerId) {
-      state.linkingPending.currentX = clientX;
-      state.linkingPending.currentY = clientY;
-      return;
-    }
-
     if (!state.linking || state.linking.pointerId !== pointerId) {
       return;
     }
 
-    const targetCard = nodeCardFromPoint(clientX, clientY);
+    const target = resolveLinkTarget(state.linking.sourceNodeId, clientX, clientY);
     state.linking.currentX = clientX;
     state.linking.currentY = clientY;
-    state.linking.targetNodeId =
-      targetCard && targetCard.dataset.nodeId !== state.linking.sourceNodeId ? targetCard.dataset.nodeId || '' : '';
+    state.linking.targetNodeId = target ? target.targetNodeId : '';
+    state.linking.targetSide = target ? target.targetSide : '';
     scheduleEdgeRender();
   }
 
   function finishLinkGesture(pointerId, clientX, clientY) {
-    if (state.linkingPending && state.linkingPending.pointerId === pointerId) {
-      cancelPendingLink();
-      scheduleEdgeRender();
-      return;
-    }
-
     if (!state.linking || state.linking.pointerId !== pointerId) {
       return;
     }
 
-    const sourceNodeId = state.linking.sourceNodeId;
-    const targetCard = nodeCardFromPoint(clientX, clientY);
-    const targetNodeId =
-      targetCard && targetCard.dataset.nodeId !== sourceNodeId ? targetCard.dataset.nodeId || '' : '';
+    const linking = state.linking;
+    const target = resolveLinkTarget(linking.sourceNodeId, clientX, clientY);
     state.linking = null;
-    cancelPendingLink();
 
-    if (!targetNodeId) {
+    if (!target || !target.targetNodeId) {
       scheduleEdgeRender();
       return;
     }
 
-    suppressNodeClickOnce(targetNodeId);
-    createNodeConnection(sourceNodeId, targetNodeId);
+    suppressNodeClickOnce(target.targetNodeId);
+    createNodeConnection(linking.sourceNodeId, target.targetNodeId, {
+      fromSide: linking.sourceSide,
+      toSide: target.targetSide || oppositeEdgeSide(linking.sourceSide),
+    });
     renderAll();
   }
 
   function cancelLinkGesture(pointerId) {
-    if (state.linkingPending && (!pointerId || state.linkingPending.pointerId === pointerId)) {
-      cancelPendingLink();
+    if (!state.linking || (pointerId && state.linking.pointerId !== pointerId)) {
+      return;
     }
 
-    if (state.linking && (!pointerId || state.linking.pointerId === pointerId)) {
-      state.linking = null;
-    }
-
+    state.linking = null;
     scheduleEdgeRender();
   }
 
   function renderEdges() {
+    if (!dom.edgeLayer || !dom.canvasWorld) {
+      return;
+    }
+
     const stageRect = dom.canvasWorld.getBoundingClientRect();
-    const selectedId = state.selectedNodeId;
+    const selectedNodeId = state.selectedNodeId;
+    const hoveredEdgeId = state.hoveredEdgeId;
+    const selectedEdgeId = state.selectedEdgeId;
     const edgeFragments = state.edges
       .map((edge) => {
         const fromEl = dom.nodeLayer.querySelector(`[data-node-id="${edge.from}"]`);
@@ -4550,17 +4817,23 @@
           return '';
         }
 
-        const start = edgeAnchorPoint(fromEl, stageRect, 'center');
-        const end = edgeAnchorPoint(toEl, stageRect, 'center');
-        const path = edgePathForPoints(start, end);
-        const midX = (start.x + end.x) / 2;
-        const midY = (start.y + end.y) / 2 - 8;
-        const highlight = edge.from === selectedId || edge.to === selectedId;
+        const { fromSide, toSide } = resolveEdgeSides(edge, fromEl, toEl);
+        const start = edgeAnchorPoint(fromEl, stageRect, fromSide);
+        const end = edgeAnchorPoint(toEl, stageRect, toSide);
+        const path = edgePathForPoints(start, end, fromSide, toSide);
+        const highlight = edge.from === selectedNodeId || edge.to === selectedNodeId;
+        const hovered = edge.id === hoveredEdgeId;
+        const selected = edge.id === selectedEdgeId;
 
         return `
-          <path class="edge-line-back" d="${path}"></path>
-          <path class="edge-line ${highlight ? 'highlight' : ''}" d="${path}"></path>
-          <text class="edge-label" x="${midX}" y="${midY}" text-anchor="middle">${edge.label}</text>
+          <g class="edge-group ${selected ? 'selected' : ''} ${hovered ? 'hovered' : ''}" data-edge-id="${edge.id}">
+            <path class="edge-hit" d="${path}" data-edge-hit="${edge.id}"></path>
+            <path class="edge-line-back" d="${path}"></path>
+            <path
+              class="edge-line ${selected ? 'selected' : hovered ? 'hovered' : highlight ? 'highlight' : ''}"
+              d="${path}"
+            ></path>
+          </g>
         `;
       })
       .join('');
@@ -4569,22 +4842,25 @@
     if (state.linking) {
       const fromEl = dom.nodeLayer.querySelector(`[data-node-id="${state.linking.sourceNodeId}"]`);
       if (fromEl) {
-        const start = edgeAnchorPoint(fromEl, stageRect, 'top');
+        const start = edgeAnchorPoint(fromEl, stageRect, state.linking.sourceSide);
         const targetEl =
           state.linking.targetNodeId && dom.nodeLayer.querySelector(`[data-node-id="${state.linking.targetNodeId}"]`);
+        const endSide = state.linking.targetSide || oppositeEdgeSide(state.linking.sourceSide);
         const end = targetEl
-          ? edgeAnchorPoint(targetEl, stageRect, 'top')
+          ? edgeAnchorPoint(targetEl, stageRect, endSide)
           : {
               x: state.linking.currentX - stageRect.left,
               y: state.linking.currentY - stageRect.top,
             };
-        previewFragment = `<path class="edge-line preview" d="${edgePathForPoints(start, end)}"></path>`;
+        previewFragment = `<path class="edge-line preview" d="${edgePathForPoints(start, end, state.linking.sourceSide, endSide)}"></path>`;
       }
     }
 
     const defs = dom.edgeLayer.querySelector('defs');
     dom.edgeLayer.innerHTML = '';
-    dom.edgeLayer.appendChild(defs);
+    if (defs) {
+      dom.edgeLayer.appendChild(defs);
+    }
     dom.edgeLayer.insertAdjacentHTML('beforeend', edgeFragments);
     if (previewFragment) {
       dom.edgeLayer.insertAdjacentHTML('beforeend', previewFragment);
@@ -4749,6 +5025,33 @@
   }
 
   function bindEvents() {
+    const clearEdgeSelection = (options = {}) => {
+      const keepHover = Boolean(options.keepHover);
+      if (!state.selectedEdgeId && (keepHover || !state.hoveredEdgeId)) {
+        return;
+      }
+
+      state.selectedEdgeId = null;
+      if (!keepHover) {
+        state.hoveredEdgeId = null;
+      }
+      scheduleEdgeRender();
+    };
+
+    const focusCanvasAfterEdgeSelection = () => {
+      const active = document.activeElement;
+      if (active && typeof active.blur === 'function' && active !== document.body) {
+        active.blur();
+      }
+
+      if (dom.canvasWorld) {
+        dom.canvasWorld.tabIndex = -1;
+        if (typeof dom.canvasWorld.focus === 'function') {
+          dom.canvasWorld.focus({ preventScroll: true });
+        }
+      }
+    };
+
     dom.navFilters.addEventListener('click', (event) => {
       const button = event.target.closest('[data-rail-action]');
       if (!button) {
@@ -5415,9 +5718,85 @@
       dom.chatInput.value = '';
     });
 
+    [dom.chatForm, dom.chatInput, dom.chatLog, dom.chatContext, dom.navFilters].forEach((element) => {
+      if (!element) {
+        return;
+      }
+
+      element.addEventListener('pointerdown', () => {
+        clearEdgeSelection();
+      });
+    });
+
+    if (dom.edgeLayer) {
+      dom.edgeLayer.addEventListener('pointerdown', (event) => {
+        const edgeTarget =
+          (event.target.closest && event.target.closest('[data-edge-hit]')) ||
+          (event.target.closest && event.target.closest('[data-edge-id]'));
+        if (!edgeTarget) {
+          return;
+        }
+
+        event.preventDefault();
+        event.stopPropagation();
+        state.selectedEdgeId = edgeTarget.dataset.edgeHit || edgeTarget.dataset.edgeId || null;
+        state.hoveredEdgeId = state.selectedEdgeId;
+        focusCanvasAfterEdgeSelection();
+        scheduleEdgeRender();
+      });
+
+      dom.edgeLayer.addEventListener('click', (event) => {
+        const edgeTarget =
+          (event.target.closest && event.target.closest('[data-edge-hit]')) ||
+          (event.target.closest && event.target.closest('[data-edge-id]'));
+        if (!edgeTarget) {
+          return;
+        }
+
+        event.stopPropagation();
+        state.selectedEdgeId = edgeTarget.dataset.edgeHit || edgeTarget.dataset.edgeId || null;
+        state.hoveredEdgeId = state.selectedEdgeId;
+        focusCanvasAfterEdgeSelection();
+        scheduleEdgeRender();
+      });
+    }
+
+    if (dom.canvasWorld) {
+      dom.canvasWorld.addEventListener('click', (event) => {
+        if (
+          (event.target.closest && event.target.closest('[data-node-id]')) ||
+          (event.target.closest && event.target.closest('[data-edge-hit]')) ||
+          (event.target.closest && event.target.closest('[data-edge-id]')) ||
+          (event.target.closest && event.target.closest('[data-project-action]')) ||
+          (event.target.closest && event.target.closest('[data-db-action]'))
+        ) {
+          return;
+        }
+
+        if (!state.selectedEdgeId) {
+          return;
+        }
+
+        clearEdgeSelection();
+      });
+    }
+
+    const handleEdgeDeleteKey = (event) => {
+      const activeEdgeId = state.selectedEdgeId || state.hoveredEdgeId;
+      if (!activeEdgeId || !['Delete', 'Backspace'].includes(event.key)) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      removeNodeConnection(activeEdgeId);
+      renderAll();
+    };
+
     window.addEventListener('resize', scheduleEdgeRender);
     window.addEventListener('pointermove', (event) => {
       updateLinkGesture(event.pointerId, event.clientX, event.clientY);
+      updateHoveredEdge(event.clientX, event.clientY);
     });
     window.addEventListener('pointerup', (event) => {
       finishLinkGesture(event.pointerId, event.clientX, event.clientY);
@@ -5425,6 +5804,7 @@
     window.addEventListener('pointercancel', (event) => {
       cancelLinkGesture(event.pointerId);
     });
+    document.addEventListener('keydown', handleEdgeDeleteKey, true);
   }
 
   async function handleUserPrompt(input) {
@@ -5748,16 +6128,6 @@
       }),
     });
     state.nodes.push(databaseNode);
-
-    const lastContainer = [...state.nodes].reverse().find((node) => node.type === 'container');
-    if (lastContainer) {
-      state.edges.push({
-        id: createId('edge'),
-        from: lastContainer.id,
-        to: id,
-        label: databaseConnectionLabel(flavor),
-      });
-    }
 
     state.selectedNodeId = id;
     addMessage(
