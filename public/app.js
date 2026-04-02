@@ -3448,28 +3448,11 @@
       const databaseConfig = node.type === 'database' ? syncDatabaseNode(node).databaseConfig : null;
       const devboxConfig = node.type === 'devbox' ? syncDevboxNode(node).devboxConfig : null;
       const displayTitle = cardTitleForNode(node);
-      const typeLabel = node.type === 'database' || node.type === 'devbox' ? '' : `<span class="node-type">${labelForType(node.type)}</span>`;
-      const titleMarkup =
-        node.type === 'database'
-          ? `
-              <div class="node-title-row">
-                <h3 class="node-title">${escapeHtml(displayTitle)}</h3>
-                <span class="node-arch-chip">${escapeHtml(databaseTopologyLabel(databaseConfig))}</span>
-              </div>
-            `
-          : `<h3 class="node-title">${escapeHtml(displayTitle)}</h3>`;
-      const headingMarkup =
-        node.type === 'devbox'
-          ? ''
-          : `
-              <div class="node-heading">
-                <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
-                <div class="node-heading-copy">
-                  ${typeLabel}
-                  ${titleMarkup}
-                </div>
-              </div>
-            `;
+      const entryStatus = compactStatusLabel(node.status || (entryConfig && entryConfig.externalStatus) || '');
+      const headerStatusMarkup = (value) =>
+        value ? `<span class="node-status-chip">${escapeHtml(value)}</span>` : '';
+      const databaseTitle = node.type === 'database' ? databaseDisplayTitle(node, databaseConfig) : '';
+      const devboxStacks = node.type === 'devbox' ? devboxStackLabels(node, devboxConfig) : [];
       const entryDomains =
         node.type === 'entry'
           ? `
@@ -3497,6 +3480,82 @@
               </div>
             `
           : '';
+      const topSectionMarkup =
+        node.type === 'entry'
+          ? `
+              <div class="node-head-row node-head-row-single">
+                <div class="node-head-main">
+                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  <div class="node-head-label">入口域名</div>
+                </div>
+                <div class="node-head-actions">
+                  ${headerStatusMarkup(entryStatus)}
+                </div>
+              </div>
+              <div class="node-subhead-row">
+                <h3 class="node-head-name">${escapeHtml(displayTitle || entryConfig.externalDomain || 'Domain')}</h3>
+              </div>
+            `
+          : node.type === 'container'
+          ? `
+              <div class="node-head-row">
+                <div class="node-head-main">
+                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  <div class="node-head-label">容器实例</div>
+                </div>
+                <div class="node-head-actions">
+                  ${headerStatusMarkup(compactStatusLabel(node.status))}
+                </div>
+              </div>
+              <div class="node-subhead-row">
+                <h3 class="node-head-name">${escapeHtml(displayTitle || 'Container')}</h3>
+              </div>
+            `
+          : node.type === 'devbox'
+          ? `
+              <div class="node-head-row">
+                <div class="node-head-main">
+                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  <div class="node-head-label">开发环境</div>
+                </div>
+                <div class="node-head-actions">
+                  ${headerStatusMarkup(compactStatusLabel(node.status))}
+                </div>
+              </div>
+              <div class="node-subhead-row">
+                <h3 class="node-head-name">${escapeHtml(displayTitle || 'Workspace')}</h3>
+                ${devboxStacks.length ? `<div class="node-stack-inline">${escapeHtml(devboxStacks.join('、'))}</div>` : ''}
+              </div>
+            `
+          : node.type === 'database'
+          ? `
+              <div class="node-head-row">
+                <div class="node-head-main">
+                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  <div class="node-head-label">数据库</div>
+                </div>
+                <div class="node-head-actions">
+                  ${headerStatusMarkup(compactStatusLabel(node.status))}
+                </div>
+              </div>
+              <div class="node-subhead-row">
+                <h3 class="node-head-name">${escapeHtml(databaseTitle)}</h3>
+              </div>
+            `
+          : `
+              <div class="node-top">
+                <div class="node-heading">
+                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  <div class="node-heading-copy">
+                    <span class="node-type">${labelForType(node.type)}</span>
+                    <h3 class="node-title">${escapeHtml(displayTitle)}</h3>
+                  </div>
+                </div>
+                <div class="node-badge-row">
+                  <div class="node-badge">${node.status}</div>
+                </div>
+              </div>
+            `;
       const containerCard =
         node.type === 'container'
           ? `
@@ -3544,16 +3603,6 @@
             `
           : '';
       const devboxCard = node.type === 'devbox' ? renderNodeDevboxCard(node, devboxConfig) : '';
-      const topIndicators = '';
-      const badgeMarkup =
-        node.type === 'database'
-          ? ''
-          : `
-              <div class="node-badge-row">
-                <div class="node-badge">${node.status}</div>
-                ${node.type === 'devbox' ? '<div class="node-kind-badge">开发环境</div>' : ''}
-              </div>
-            `;
       const card = document.createElement('button');
       card.type = 'button';
       card.className = `node-card ${node.id === state.selectedNodeId ? 'active' : ''}`;
@@ -3574,18 +3623,8 @@
             `,
           )
           .join('')}
-        ${badgeMarkup}
-        ${
-          headingMarkup || topIndicators
-            ? `
-                <div class="node-top ${node.type === 'database' ? 'node-top-compact' : ''}">
-                  ${headingMarkup}
-                  ${topIndicators}
-                </div>
-              `
-            : ''
-        }
-        ${node.subtitle && node.type !== 'devbox' ? `<p class="node-subtitle">${escapeHtml(node.subtitle)}</p>` : ''}
+        ${topSectionMarkup}
+        ${node.subtitle && !['devbox', 'entry'].includes(node.type) ? `<p class="node-subtitle">${escapeHtml(node.subtitle)}</p>` : ''}
         ${entryDomains}
         ${containerCard}
         ${databaseCard}
@@ -6437,7 +6476,7 @@
       container: 'inventory_2',
       database: 'storage',
       app: 'widgets',
-      devbox: 'terminal',
+      devbox: 'code',
     }[type];
   }
 
@@ -6681,6 +6720,41 @@
     return Number.isFinite(replicas) && replicas > 1 ? '高可用' : '单副本';
   }
 
+  function compactStatusLabel(status) {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (!normalized) {
+      return '';
+    }
+
+    return {
+      accessible: 'accessible',
+      running: 'running',
+      ready: 'ready',
+      protected: 'protected',
+    }[normalized] || normalized;
+  }
+
+  function databaseDisplayTitle(node, config) {
+    const baseTitle = String(cardTitleForNode(node) || (node && node.title) || '').trim() || 'Database';
+    const version = String((config && config.version) || '').trim();
+    return version ? `${baseTitle} ${version}` : baseTitle;
+  }
+
+  function devboxStackLabels(node, config) {
+    const labels = [];
+    const pushLabel = (value) => {
+      const normalized = String(value || '').trim();
+      if (!normalized || labels.includes(normalized)) {
+        return;
+      }
+
+      labels.push(normalized);
+    };
+
+    pushLabel((config && config.templateName) || (node && node.details && node.details.templateName) || '');
+    return labels.slice(0, 2);
+  }
+
   function resolveDevboxNodeTemplate(node) {
     if (!node || node.type !== 'devbox') {
       return null;
@@ -6731,20 +6805,9 @@
   }
 
   function renderNodeDevboxCard(node, config) {
-    const template = resolveDevboxNodeTemplate(node);
-    const stack = devboxTemplateStack(template);
     const current = config || (node && node.devboxConfig) || {};
 
     return `
-      <div class="node-devbox-head">
-        <div class="node-devbox-stack">
-          ${stack.map((item) => renderTemplateBadge(item)).join('')}
-          <strong class="node-devbox-owner">${escapeHtml(cardTitleForNode(node) || 'Workspace')}</strong>
-        </div>
-        <div class="node-devbox-head-side">
-          <span class="node-devbox-template">${escapeHtml(template ? template.name : 'DevBox')}</span>
-        </div>
-      </div>
       <div class="node-container-meters">
         ${renderContainerMeter('CPU', current.usedCpu || estimateUsedCpu(current.cpu || '4'), current.cpu || '4', { kind: 'cpu' })}
         ${renderContainerMeter('内存', current.usedMemory || estimateUsedMemory(current.memory || '8Gi'), current.memory || '8Gi')}
