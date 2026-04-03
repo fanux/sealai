@@ -10,7 +10,7 @@
     "repo_name": "sealai",
     "url": "https://sealai-yjhjqxcq.sealosgzg.site",
     "deployed_at": "2026-04-01T07:26:22Z",
-    "last_updated_at": "2026-04-02T08:48:58Z"
+    "last_updated_at": "2026-04-03T02:10:43Z"
   },
   "history": [
     {
@@ -38,6 +38,24 @@
       "method": "kubectl-set-image",
       "status": "success",
       "note": "Updated the Sealos deployment with the latest UI and project creation flow changes."
+    },
+    {
+      "at": "2026-04-03T02:00:54Z",
+      "action": "set-image",
+      "previous_image": "ghcr.io/fanux/sealai:20260402-164429",
+      "image": "ghcr.io/fanux/sealai:20260403-095642",
+      "method": "kubectl-set-image",
+      "status": "failed",
+      "note": "Rolled back after ImagePullBackOff; Sealos registry proxy returned timeout/500 while fetching the new GHCR image."
+    },
+    {
+      "at": "2026-04-03T02:10:43Z",
+      "action": "sync-public-assets",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "configmap": "sealai-ymwsyhbd-public",
+      "method": "kubectl-configmap-mount",
+      "status": "success",
+      "note": "Updated the live Sealos UI by mounting the latest public/ assets from a ConfigMap after registry-based image rollout failed."
     }
   ]
 }
