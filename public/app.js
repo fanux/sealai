@@ -38,6 +38,14 @@
     },
   ];
 
+  const PROJECT_FILTER = FILTERS.find((filter) => filter.id === 'projects') || FILTERS[0];
+  const CHAT_TOOL_FILTERS = FILTERS.filter((filter) => filter.id !== 'projects');
+  const RECENT_PROJECT_LIMIT = 5;
+  const PROJECT_CREATE_GUIDE_WINDOW_MS = 3 * 60 * 1000;
+  const CANVAS_SCALE_MIN = 0.6;
+  const CANVAS_SCALE_MAX = 2.4;
+  const CANVAS_PAN_MARGIN = 140;
+
   const PROJECT_CREATE_MODES = [
     {
       id: 'github',
@@ -293,6 +301,7 @@
     chatLog: document.getElementById('chatLog'),
     chatForm: document.getElementById('chatForm'),
     chatInput: document.getElementById('chatInput'),
+    chatToolDock: document.getElementById('chatToolDock'),
     agentBadge: document.getElementById('agentBadge'),
     agentMode: document.getElementById('agentMode'),
     domainCount: document.getElementById('domainCount'),
@@ -319,6 +328,21 @@
     containerView: null,
     devboxView: null,
     projectListOpen: false,
+    sessionStartedAt: Date.now(),
+    projectCreateGuideShown: false,
+    canvasViewport: {
+      scale: 1,
+      x: 0,
+      y: 0,
+      initialized: false,
+      panningPointerId: null,
+      startClientX: 0,
+      startClientY: 0,
+      startX: 0,
+      startY: 0,
+      moved: false,
+      suppressClick: false,
+    },
     suppressClickNodeId: null,
     activeConfigMessageId: null,
     hoveredEdgeId: null,
@@ -3104,6 +3128,21 @@
     state.containerView = null;
     state.devboxView = null;
     state.projectListOpen = false;
+    state.sessionStartedAt = Date.now();
+    state.projectCreateGuideShown = false;
+    state.canvasViewport = {
+      scale: 1,
+      x: 0,
+      y: 0,
+      initialized: false,
+      panningPointerId: null,
+      startClientX: 0,
+      startClientY: 0,
+      startX: 0,
+      startY: 0,
+      moved: false,
+      suppressClick: false,
+    };
     state.linking = null;
     state.planModalOpen = false;
     state.lastIssue = {
@@ -3557,29 +3596,72 @@
   }
 
   function renderNav() {
-    dom.navFilters.innerHTML = FILTERS.map((filter) => {
-      const isActive =
-        filter.id === 'projects'
-          ? state.projectListOpen || collectProjectNodes().some((node) => node.id === state.selectedNodeId)
-          : false;
+    if (!dom.navFilters) {
+      return;
+    }
 
-      return `
-        <button
-          class="rail-icon-button ${isActive ? 'active' : ''}"
-          type="button"
-          data-rail-action="${filter.action || 'prompt'}"
-          ${filter.prompt ? `data-shortcut-prompt="${filter.prompt}"` : ''}
-          data-label="${filter.label}"
-          ${filter.icon === 'docker' ? 'data-accent="docker"' : ''}
-          ${filter.icon === 'github' ? 'data-accent="github"' : ''}
-          ${filter.icon === 'vscode' ? 'data-accent="vscode"' : ''}
-          title="${filter.label}"
-          aria-label="${filter.label}"
-        >
-          ${iconMarkup(filter.icon)}
-        </button>
-      `;
-    }).join('');
+    const recentProjects = collectRecentProjectNodes();
+    const isActive =
+      state.projectListOpen || collectProjectNodes().some((node) => node.id === state.selectedNodeId);
+
+    dom.navFilters.innerHTML = `
+      <button
+        class="rail-icon-button ${isActive ? 'active' : ''}"
+        type="button"
+        data-rail-action="${PROJECT_FILTER.action || 'projects'}"
+        title="${PROJECT_FILTER.label}"
+        aria-label="${PROJECT_FILTER.label}"
+      >
+        ${iconMarkup(PROJECT_FILTER.icon)}
+      </button>
+
+      <div class="recent-project-list">
+        ${
+          recentProjects.length
+            ? recentProjects
+                .map((node) => {
+                  const selected = node.id === state.selectedNodeId && !state.projectListOpen;
+                  const title = cardTitleForNode(node) || node.title;
+                  return `
+                    <button
+                      class="recent-project-item ${selected ? 'active' : ''}"
+                      type="button"
+                      data-project-action="open-project"
+                      data-project-node-id="${node.id}"
+                      title="${escapeHtml(title)}"
+                      aria-label="${escapeHtml(title)}"
+                    >
+                      <span class="recent-project-icon">${iconMarkup(iconForType(node.type))}</span>
+                    </button>
+                  `;
+                })
+                .join('')
+            : '<div class="recent-project-empty">暂无项目</div>'
+        }
+      </div>
+    `;
+  }
+
+  function renderChatToolDock() {
+    if (!dom.chatToolDock) {
+      return;
+    }
+
+    dom.chatToolDock.innerHTML = CHAT_TOOL_FILTERS.map((filter) => `
+      <button
+        class="chat-tool-button"
+        type="button"
+        data-tool-action="${filter.action || 'prompt'}"
+        ${filter.prompt ? `data-shortcut-prompt="${filter.prompt}"` : ''}
+        ${filter.icon === 'docker' ? 'data-accent="docker"' : ''}
+        ${filter.icon === 'github' ? 'data-accent="github"' : ''}
+        ${filter.icon === 'vscode' ? 'data-accent="vscode"' : ''}
+        title="${filter.label}"
+        aria-label="${filter.label}"
+      >
+        <span class="chat-tool-icon">${iconMarkup(filter.icon)}</span>
+      </button>
+    `).join('');
   }
 
   function renderCanvas() {
@@ -3873,11 +3955,11 @@
           return;
         }
 
-        const rect = dom.canvasWorld.getBoundingClientRect();
+        const point = clientToCanvasPoint(event.clientX, event.clientY);
         state.dragging = {
           nodeId: node.id,
-          offsetX: event.clientX - rect.left - node.x,
-          offsetY: event.clientY - rect.top - node.y,
+          offsetX: point.x - node.x,
+          offsetY: point.y - node.y,
           startX: event.clientX,
           startY: event.clientY,
           moved: false,
@@ -3898,18 +3980,19 @@
           state.dragging.moved = true;
         }
 
-        const rect = dom.canvasWorld.getBoundingClientRect();
+        const point = clientToCanvasPoint(event.clientX, event.clientY);
         const width = card.offsetWidth;
         const height = card.offsetHeight;
+        const world = canvasWorldSize();
         node.x = clamp(
-          event.clientX - rect.left - state.dragging.offsetX,
+          point.x - state.dragging.offsetX,
           20,
-          dom.canvasWorld.clientWidth - width - 20,
+          world.width - width - 20,
         );
         node.y = clamp(
-          event.clientY - rect.top - state.dragging.offsetY,
+          point.y - state.dragging.offsetY,
           20,
-          dom.canvasWorld.clientHeight - height - 30,
+          world.height - height - 30,
         );
         card.style.left = `${node.x}px`;
         card.style.top = `${node.y}px`;
@@ -4780,33 +4863,37 @@
   }
 
   function edgeAnchorPoint(element, stageRect, side = 'right') {
-    const rect = element.getBoundingClientRect();
+    const node = getNodeById((element && element.dataset && element.dataset.nodeId) || '');
+    const left = node ? node.x : Number.parseFloat(element.style.left) || element.offsetLeft || 0;
+    const top = node ? node.y : Number.parseFloat(element.style.top) || element.offsetTop || 0;
+    const width = element.offsetWidth || 0;
+    const height = element.offsetHeight || 0;
     const normalizedSide = normalizeEdgeSide(side);
 
     if (normalizedSide === 'top') {
       return {
-        x: rect.left - stageRect.left + rect.width / 2,
-        y: rect.top - stageRect.top,
+        x: left + width / 2,
+        y: top,
       };
     }
 
     if (normalizedSide === 'bottom') {
       return {
-        x: rect.left - stageRect.left + rect.width / 2,
-        y: rect.bottom - stageRect.top,
+        x: left + width / 2,
+        y: top + height,
       };
     }
 
     if (normalizedSide === 'left') {
       return {
-        x: rect.left - stageRect.left,
-        y: rect.top - stageRect.top + rect.height / 2,
+        x: left,
+        y: top + height / 2,
       };
     }
 
     return {
-      x: rect.right - stageRect.left,
-      y: rect.top - stageRect.top + rect.height / 2,
+      x: left + width,
+      y: top + height / 2,
     };
   }
 
@@ -4995,7 +5082,6 @@
       return;
     }
 
-    const stageRect = dom.canvasWorld.getBoundingClientRect();
     const selectedNodeId = state.selectedNodeId;
     const hoveredEdgeId = state.hoveredEdgeId;
     const selectedEdgeId = state.selectedEdgeId;
@@ -5008,8 +5094,8 @@
         }
 
         const { fromSide, toSide } = resolveEdgeSides(edge, fromEl, toEl);
-        const start = edgeAnchorPoint(fromEl, stageRect, fromSide);
-        const end = edgeAnchorPoint(toEl, stageRect, toSide);
+        const start = edgeAnchorPoint(fromEl, null, fromSide);
+        const end = edgeAnchorPoint(toEl, null, toSide);
         const path = edgePathForPoints(start, end, fromSide, toSide);
         const highlight = edge.from === selectedNodeId || edge.to === selectedNodeId;
         const hovered = edge.id === hoveredEdgeId;
@@ -5032,16 +5118,13 @@
     if (state.linking) {
       const fromEl = dom.nodeLayer.querySelector(`[data-node-id="${state.linking.sourceNodeId}"]`);
       if (fromEl) {
-        const start = edgeAnchorPoint(fromEl, stageRect, state.linking.sourceSide);
+        const start = edgeAnchorPoint(fromEl, null, state.linking.sourceSide);
         const targetEl =
           state.linking.targetNodeId && dom.nodeLayer.querySelector(`[data-node-id="${state.linking.targetNodeId}"]`);
         const endSide = state.linking.targetSide || oppositeEdgeSide(state.linking.sourceSide);
         const end = targetEl
-          ? edgeAnchorPoint(targetEl, stageRect, endSide)
-          : {
-              x: state.linking.currentX - stageRect.left,
-              y: state.linking.currentY - stageRect.top,
-            };
+          ? edgeAnchorPoint(targetEl, null, endSide)
+          : clientToCanvasPoint(state.linking.currentX, state.linking.currentY);
         previewFragment = `<path class="edge-line preview" d="${edgePathForPoints(start, end, state.linking.sourceSide, endSide)}"></path>`;
       }
     }
@@ -5207,8 +5290,10 @@
 
   function renderAll() {
     renderNav();
+    renderChatToolDock();
     renderCanvas();
     renderCanvasWorkspace();
+    syncCanvasViewport();
     renderSidebarContext();
     renderChat();
     renderPlanOverlay();
@@ -5279,54 +5364,32 @@
     }
 
     dom.navFilters.addEventListener('click', (event) => {
+      const projectButton = event.target.closest('[data-project-action]');
+      if (projectButton) {
+        if (projectButton.dataset.projectAction === 'open-project') {
+          openProjectNode(getNodeById(projectButton.dataset.projectNodeId || ''));
+          return;
+        }
+      }
+
       const button = event.target.closest('[data-rail-action]');
       if (!button) {
         return;
       }
 
-      if (button.dataset.railAction === 'projects') {
-        closeDatabaseWorkspace();
-        closeEntryContext();
-        closeContainerContext();
-        closeDevboxContext();
-        openProjectListView();
-        renderAll();
-        return;
-      }
-
-      if (button.dataset.railAction === 'github-ui') {
-        closeProjectListView();
-        openGithubImportUi();
-        return;
-      }
-
-      if (button.dataset.railAction === 'docker-ui') {
-        closeProjectListView();
-        openDockerDeployUi();
-        return;
-      }
-
-      if (button.dataset.railAction === 'database-ui') {
-        closeProjectListView();
-        openDatabaseDeployUi();
-        return;
-      }
-
-      if (button.dataset.railAction === 'app-ui') {
-        closeProjectListView();
-        openAppStoreUi();
-        return;
-      }
-
-      if (button.dataset.railAction === 'devbox-ui') {
-        closeProjectListView();
-        openDevboxDeployUi();
-        return;
-      }
-
-      dom.chatInput.value = button.dataset.shortcutPrompt || '';
-      dom.chatInput.focus();
+      handleToolbarAction(button.dataset.railAction, button.dataset.shortcutPrompt || '');
     });
+
+    if (dom.chatToolDock) {
+      dom.chatToolDock.addEventListener('click', (event) => {
+        const button = event.target.closest('[data-tool-action]');
+        if (!button) {
+          return;
+        }
+
+        handleToolbarAction(button.dataset.toolAction, button.dataset.shortcutPrompt || '');
+      });
+    }
 
     dom.chatLog.addEventListener('input', (event) => {
       const input = event.target.closest('[data-agui-field]');
@@ -5605,32 +5668,7 @@
           }
 
           if (projectButton.dataset.projectAction === 'open-project') {
-            const node = getNodeById(projectButton.dataset.projectNodeId || '');
-            if (!node) {
-              return;
-            }
-
-            state.selectedNodeId = node.id;
-            closeProjectListView();
-            closeDatabaseWorkspace();
-            closeEntryContext();
-            closeContainerContext();
-            closeDevboxContext();
-
-            if (supportsDatabaseWorkspace(node)) {
-              openDatabaseWorkspace(node.id);
-            } else if (node.type === 'container') {
-              openContainerContext(node.id);
-            } else if (node.type === 'entry') {
-              openEntryContext(node.id);
-            } else if (node.type === 'devbox') {
-              openDevboxContext(node.id);
-            } else {
-              state.activeConfigMessageId = null;
-            }
-
-            pushNodeConfigMessage(node);
-            renderAll();
+            openProjectNode(getNodeById(projectButton.dataset.projectNodeId || ''));
             return;
           }
         }
@@ -5944,7 +5982,7 @@
       dom.chatInput.value = '';
     });
 
-    [dom.chatForm, dom.chatInput, dom.chatLog, dom.chatContext, dom.navFilters].forEach((element) => {
+    [dom.chatForm, dom.chatInput, dom.chatLog, dom.chatContext, dom.navFilters, dom.chatToolDock].forEach((element) => {
       if (!element) {
         return;
       }
@@ -5987,8 +6025,44 @@
       });
     }
 
+    if (dom.canvasStage) {
+      dom.canvasStage.addEventListener('pointerdown', (event) => {
+        if (
+          event.button !== 0 ||
+          !canvasInteractionsEnabled() ||
+          (event.target.closest && event.target.closest('.canvas-workspace')) ||
+          (event.target.closest && event.target.closest('[data-node-id]')) ||
+          (event.target.closest && event.target.closest('[data-edge-hit]')) ||
+          (event.target.closest && event.target.closest('[data-edge-id]')) ||
+          (event.target.closest && event.target.closest('[data-node-link-handle]'))
+        ) {
+          return;
+        }
+
+        beginCanvasPan(event.pointerId, event.clientX, event.clientY);
+      });
+
+      dom.canvasStage.addEventListener(
+        'wheel',
+        (event) => {
+          if (!canvasInteractionsEnabled()) {
+            return;
+          }
+
+          event.preventDefault();
+          const zoomFactor = Math.exp(-event.deltaY * 0.0014);
+          zoomCanvasAt(event.clientX, event.clientY, state.canvasViewport.scale * zoomFactor);
+        },
+        { passive: false },
+      );
+    }
+
     if (dom.canvasWorld) {
       dom.canvasWorld.addEventListener('click', (event) => {
+        if (state.canvasViewport.suppressClick) {
+          return;
+        }
+
         if (
           (event.target.closest && event.target.closest('[data-node-id]')) ||
           (event.target.closest && event.target.closest('[data-edge-hit]')) ||
@@ -6023,15 +6097,21 @@
       renderAll();
     };
 
-    window.addEventListener('resize', scheduleEdgeRender);
+    window.addEventListener('resize', () => {
+      syncCanvasViewport();
+      scheduleEdgeRender();
+    });
     window.addEventListener('pointermove', (event) => {
+      updateCanvasPan(event.pointerId, event.clientX, event.clientY);
       updateLinkGesture(event.pointerId, event.clientX, event.clientY);
       updateHoveredEdge(event.clientX, event.clientY);
     });
     window.addEventListener('pointerup', (event) => {
+      finishCanvasPan(event.pointerId);
       finishLinkGesture(event.pointerId, event.clientX, event.clientY);
     });
     window.addEventListener('pointercancel', (event) => {
+      finishCanvasPan(event.pointerId);
       cancelLinkGesture(event.pointerId);
     });
     window.addEventListener('keydown', (event) => {
@@ -7247,12 +7327,276 @@
     return fallbackNodes.slice(0, 6);
   }
 
+  function collectRecentProjectNodes() {
+    return collectProjectNodes().slice(-RECENT_PROJECT_LIMIT).reverse();
+  }
+
   function openProjectListView() {
     state.projectListOpen = true;
+    maybeOpenProjectCreateGuide();
   }
 
   function closeProjectListView() {
     state.projectListOpen = false;
+  }
+
+  function maybeOpenProjectCreateGuide() {
+    if (state.projectCreateGuideShown) {
+      return;
+    }
+
+    const withinGuideWindow = Date.now() - state.sessionStartedAt <= PROJECT_CREATE_GUIDE_WINDOW_MS;
+    if (!withinGuideWindow) {
+      return;
+    }
+
+    state.projectCreateGuideShown = true;
+    openProjectCreateUi();
+  }
+
+  function canvasInteractionsEnabled() {
+    return Boolean(dom.canvasStage && dom.canvasWorld) && !state.projectListOpen && !Boolean(activeDatabaseContext());
+  }
+
+  function clampCanvasScale(value) {
+    return clamp(value, CANVAS_SCALE_MIN, CANVAS_SCALE_MAX);
+  }
+
+  function canvasWorldSize() {
+    return {
+      width: Math.max(dom.canvasWorld ? dom.canvasWorld.offsetWidth : 0, 1280),
+      height: Math.max(dom.canvasWorld ? dom.canvasWorld.offsetHeight : 0, 820),
+    };
+  }
+
+  function clampCanvasPan(x, y, scale = state.canvasViewport.scale) {
+    if (!dom.canvasStage || !dom.canvasWorld) {
+      return { x, y };
+    }
+
+    const stageWidth = dom.canvasStage.clientWidth || 0;
+    const stageHeight = dom.canvasStage.clientHeight || 0;
+    const world = canvasWorldSize();
+    const scaledWidth = world.width * scale;
+    const scaledHeight = world.height * scale;
+
+    let minX = stageWidth - scaledWidth - CANVAS_PAN_MARGIN;
+    let maxX = CANVAS_PAN_MARGIN;
+    if (scaledWidth + CANVAS_PAN_MARGIN * 2 <= stageWidth) {
+      const centeredX = (stageWidth - scaledWidth) / 2;
+      minX = centeredX - CANVAS_PAN_MARGIN;
+      maxX = centeredX + CANVAS_PAN_MARGIN;
+    }
+
+    let minY = stageHeight - scaledHeight - CANVAS_PAN_MARGIN;
+    let maxY = CANVAS_PAN_MARGIN;
+    if (scaledHeight + CANVAS_PAN_MARGIN * 2 <= stageHeight) {
+      const centeredY = (stageHeight - scaledHeight) / 2;
+      minY = centeredY - CANVAS_PAN_MARGIN;
+      maxY = centeredY + CANVAS_PAN_MARGIN;
+    }
+
+    return {
+      x: clamp(x, minX, maxX),
+      y: clamp(y, minY, maxY),
+    };
+  }
+
+  function applyCanvasViewport() {
+    if (!dom.canvasStage || !dom.canvasWorld) {
+      return;
+    }
+
+    const viewport = state.canvasViewport;
+    const pan = clampCanvasPan(viewport.x, viewport.y, viewport.scale);
+    viewport.x = pan.x;
+    viewport.y = pan.y;
+
+    dom.canvasWorld.style.transformOrigin = '0 0';
+    dom.canvasWorld.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
+    dom.canvasStage.classList.toggle('canvas-pan-enabled', canvasInteractionsEnabled());
+    dom.canvasStage.classList.toggle('panning', Boolean(viewport.panningPointerId));
+  }
+
+  function syncCanvasViewport(forceRecenter = false) {
+    if (!dom.canvasStage || !dom.canvasWorld) {
+      return;
+    }
+
+    const viewport = state.canvasViewport;
+    if (!viewport.initialized || forceRecenter) {
+      const world = canvasWorldSize();
+      viewport.scale = 1;
+      viewport.x = (dom.canvasStage.clientWidth - world.width) / 2;
+      viewport.y = (dom.canvasStage.clientHeight - world.height) / 2;
+      viewport.initialized = true;
+    }
+
+    applyCanvasViewport();
+  }
+
+  function clientToCanvasPoint(clientX, clientY) {
+    if (!dom.canvasStage) {
+      return { x: clientX, y: clientY };
+    }
+
+    const rect = dom.canvasStage.getBoundingClientRect();
+    const viewport = state.canvasViewport;
+    return {
+      x: (clientX - rect.left - viewport.x) / viewport.scale,
+      y: (clientY - rect.top - viewport.y) / viewport.scale,
+    };
+  }
+
+  function zoomCanvasAt(clientX, clientY, nextScale) {
+    if (!dom.canvasStage || !dom.canvasWorld) {
+      return;
+    }
+
+    const viewport = state.canvasViewport;
+    const targetScale = clampCanvasScale(nextScale);
+    if (Math.abs(targetScale - viewport.scale) < 0.001) {
+      return;
+    }
+
+    const stageRect = dom.canvasStage.getBoundingClientRect();
+    const pointX = clientX - stageRect.left;
+    const pointY = clientY - stageRect.top;
+    const worldX = (pointX - viewport.x) / viewport.scale;
+    const worldY = (pointY - viewport.y) / viewport.scale;
+
+    viewport.scale = targetScale;
+    viewport.x = pointX - worldX * viewport.scale;
+    viewport.y = pointY - worldY * viewport.scale;
+    applyCanvasViewport();
+  }
+
+  function beginCanvasPan(pointerId, clientX, clientY) {
+    const viewport = state.canvasViewport;
+    viewport.panningPointerId = pointerId;
+    viewport.startClientX = clientX;
+    viewport.startClientY = clientY;
+    viewport.startX = viewport.x;
+    viewport.startY = viewport.y;
+    viewport.moved = false;
+    applyCanvasViewport();
+  }
+
+  function updateCanvasPan(pointerId, clientX, clientY) {
+    const viewport = state.canvasViewport;
+    if (viewport.panningPointerId !== pointerId) {
+      return;
+    }
+
+    const deltaX = clientX - viewport.startClientX;
+    const deltaY = clientY - viewport.startClientY;
+    if (!viewport.moved && Math.hypot(deltaX, deltaY) > 4) {
+      viewport.moved = true;
+    }
+
+    viewport.x = viewport.startX + deltaX;
+    viewport.y = viewport.startY + deltaY;
+    applyCanvasViewport();
+  }
+
+  function finishCanvasPan(pointerId) {
+    const viewport = state.canvasViewport;
+    if (viewport.panningPointerId !== pointerId) {
+      return;
+    }
+
+    const moved = viewport.moved;
+    viewport.panningPointerId = null;
+    viewport.startClientX = 0;
+    viewport.startClientY = 0;
+    viewport.startX = viewport.x;
+    viewport.startY = viewport.y;
+    viewport.moved = false;
+    applyCanvasViewport();
+
+    if (moved) {
+      viewport.suppressClick = true;
+      window.setTimeout(() => {
+        viewport.suppressClick = false;
+      }, 220);
+    }
+  }
+
+  function openProjectNode(node) {
+    if (!node) {
+      return;
+    }
+
+    state.selectedNodeId = node.id;
+    closeProjectListView();
+    closeDatabaseWorkspace();
+    closeEntryContext();
+    closeContainerContext();
+    closeDevboxContext();
+
+    if (supportsDatabaseWorkspace(node)) {
+      openDatabaseWorkspace(node.id);
+    } else if (node.type === 'container') {
+      openContainerContext(node.id);
+    } else if (node.type === 'entry') {
+      openEntryContext(node.id);
+    } else if (node.type === 'devbox') {
+      openDevboxContext(node.id);
+    } else {
+      state.activeConfigMessageId = null;
+    }
+
+    pushNodeConfigMessage(node);
+    renderAll();
+  }
+
+  function handleToolbarAction(action, prompt = '') {
+    if (!action) {
+      return;
+    }
+
+    if (action === 'projects') {
+      closeDatabaseWorkspace();
+      closeEntryContext();
+      closeContainerContext();
+      closeDevboxContext();
+      openProjectListView();
+      renderAll();
+      return;
+    }
+
+    if (action === 'github-ui') {
+      closeProjectListView();
+      openGithubImportUi();
+      return;
+    }
+
+    if (action === 'docker-ui') {
+      closeProjectListView();
+      openDockerDeployUi();
+      return;
+    }
+
+    if (action === 'database-ui') {
+      closeProjectListView();
+      openDatabaseDeployUi();
+      return;
+    }
+
+    if (action === 'app-ui') {
+      closeProjectListView();
+      openAppStoreUi();
+      return;
+    }
+
+    if (action === 'devbox-ui') {
+      closeProjectListView();
+      openDevboxDeployUi();
+      return;
+    }
+
+    dom.chatInput.value = prompt || '';
+    dom.chatInput.focus();
   }
 
   function projectDescriptionForNode(node) {
@@ -9078,7 +9422,7 @@
     if (icon === 'project') {
       return `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M5 3.5h8.6l1.9 1.9H19A2.5 2.5 0 0 1 21.5 8v8A2.5 2.5 0 0 1 19 18.5H5A2.5 2.5 0 0 1 2.5 16V6A2.5 2.5 0 0 1 5 3.5Zm0 1.5A1 1 0 0 0 4 6v10a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1h-4.1L13 5H5Zm2.25 3.75a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm4.75 0a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5Zm4.75 0a1.25 1.25 0 1 1 0 2.5 1.25 1.25 0 0 1 0-2.5ZM8.5 15h7a.75.75 0 0 1 0 1.5h-7a.75.75 0 0 1 0-1.5Z"/>
+          <path d="M4 3.5h16A1.5 1.5 0 0 1 21.5 5v14A1.5 1.5 0 0 1 20 20.5H4A1.5 1.5 0 0 1 2.5 19V5A1.5 1.5 0 0 1 4 3.5Zm0 1.5v14h16V5H4Zm2 2h4v4H6V7Zm5 0h7v4h-7V7ZM6 12h4v5H6v-5Zm5 0h7v2h-7v-2Zm0 3h7v2h-7v-2Z"/>
         </svg>
       `;
     }

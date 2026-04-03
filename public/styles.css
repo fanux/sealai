@@ -388,13 +388,15 @@ button {
   font-size: 10px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  margin-bottom: 12px;
 }
 
-.icon-rail {
-  display: flex;
-  flex-direction: column;
+.side-rail-panel {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  justify-items: center;
   gap: 8px;
-  align-items: center;
   padding: 10px 6px;
 }
 
@@ -462,6 +464,69 @@ button {
   opacity: 1;
 }
 
+.recent-project-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  overflow-y: auto;
+  justify-items: center;
+  padding-right: 0;
+}
+
+.recent-project-item {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: rgba(16, 26, 49, 0.9);
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.recent-project-item:hover,
+.recent-project-item.active {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+}
+
+.recent-project-item.active {
+  border-color: rgba(83, 221, 252, 0.34);
+}
+
+.recent-project-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--secondary);
+}
+
+.recent-project-icon svg,
+.recent-project-icon .material-symbols-outlined {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+  fill: currentColor;
+}
+
+.recent-project-empty {
+  width: 42px;
+  min-height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 6px;
+  border: 1px dashed var(--line);
+  color: var(--text-soft);
+  font-size: 9px;
+  line-height: 1.3;
+  text-align: center;
+}
+
 .canvas-shell {
   min-width: 0;
   min-height: 0;
@@ -472,7 +537,7 @@ button {
   position: relative;
   width: 100%;
   height: 100%;
-  overflow: auto;
+  overflow: hidden;
 }
 
 .canvas-stage.workspace-mode {
@@ -492,6 +557,17 @@ button {
   position: relative;
   width: max(100%, 1280px);
   height: max(100%, 820px);
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.canvas-stage.canvas-pan-enabled {
+  cursor: grab;
+  touch-action: none;
+}
+
+.canvas-stage.canvas-pan-enabled.panning {
+  cursor: grabbing;
 }
 
 .canvas-workspace {
@@ -2927,6 +3003,8 @@ button {
 .chat-form {
   position: relative;
   z-index: 1;
+  display: grid;
+  gap: 10px;
   padding-top: 12px;
   border-top: 1px solid var(--line);
   background: rgba(9, 17, 34, 0.98);
@@ -2953,8 +3031,9 @@ button {
 
 .chat-actions {
   display: flex;
-  justify-content: flex-end;
-  margin-top: 10px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .send-button {
@@ -2969,6 +3048,60 @@ button {
 
 .send-button:hover {
   border-color: var(--primary);
+}
+
+.chat-tool-dock {
+  display: grid;
+  grid-template-columns: repeat(5, 42px);
+  gap: 8px;
+}
+
+.chat-tool-button {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.chat-tool-button:hover {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+}
+
+.chat-tool-button[data-accent='docker'] .chat-tool-icon {
+  color: #74c6fc;
+}
+
+.chat-tool-button[data-accent='github'] .chat-tool-icon {
+  color: #d8e0f5;
+}
+
+.chat-tool-button[data-accent='vscode'] .chat-tool-icon {
+  color: #3ea6ff;
+}
+
+.chat-tool-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--secondary);
+}
+
+.chat-tool-icon svg,
+.chat-tool-icon .material-symbols-outlined {
+  width: 18px;
+  height: 18px;
+  display: block;
+  font-size: 18px;
+  fill: currentColor;
 }
 
 ::-webkit-scrollbar {
@@ -3041,11 +3174,23 @@ button {
   .side-rail {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    overflow-x: auto;
   }
 
-  .icon-rail {
-    flex-direction: row;
+  .side-rail-panel {
+    height: auto;
+    grid-template-rows: auto auto auto;
+  }
+
+  .recent-project-list {
+    grid-auto-flow: column;
+    grid-auto-columns: 42px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding-bottom: 4px;
+  }
+
+  .chat-tool-dock {
+    grid-template-columns: repeat(5, 42px);
     justify-content: flex-start;
   }
 
