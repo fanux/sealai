@@ -1356,6 +1356,70 @@
         options.backupPolicy ||
           ((options.node && options.node.details && options.node.details.backup) || 'PITR / Hourly')
       ),
+      backupRetention: String(options.backupRetention || '7 天'),
+      backupWindow: String(options.backupWindow || '02:00 - 03:00 UTC+8'),
+      backupTarget: String(options.backupTarget || '对象存储 /sealai-backup'),
+    };
+  }
+
+  function buildDatabaseBackupPlan(node, config) {
+    const databaseName = inferDatabaseName(node);
+    return {
+      status: 'protected',
+      lastSuccessAt: '2026-04-07 13:48',
+      nextRunAt: '2026-04-07 15:00',
+      pointInTime: '开启，保留 72 小时',
+      storageUsed: '86.4 GiB',
+      target: config.backupTarget || '对象存储 /sealai-backup',
+      jobs: [
+        {
+          id: 'backup-20260407-1348',
+          type: '自动快照',
+          scope: `${databaseName} / full`,
+          status: 'success',
+          startedAt: '2026-04-07 13:48',
+          duration: '2m 14s',
+          size: '12.6 GiB',
+        },
+        {
+          id: 'backup-20260407-0900',
+          type: 'PITR 基线',
+          scope: `${databaseName} / wal`,
+          status: 'running',
+          startedAt: '2026-04-07 09:00',
+          duration: '持续中',
+          size: '6.8 GiB',
+        },
+        {
+          id: 'backup-20260406-2300',
+          type: '手动备份',
+          scope: `${databaseName} / schema + data`,
+          status: 'success',
+          startedAt: '2026-04-06 23:00',
+          duration: '1m 42s',
+          size: '11.9 GiB',
+        },
+      ],
+      recoveryPoints: [
+        {
+          id: 'restore-1',
+          label: '最近成功快照',
+          time: '2026-04-07 13:48',
+          note: '适合整库回滚',
+        },
+        {
+          id: 'restore-2',
+          label: '今天 09:00 基线',
+          time: '2026-04-07 09:00',
+          note: '可配合 PITR 恢复到任意分钟',
+        },
+        {
+          id: 'restore-3',
+          label: '昨晚手动备份',
+          time: '2026-04-06 23:00',
+          note: '适合变更前恢复',
+        },
+      ],
     };
   }
 
@@ -1628,6 +1692,13 @@
     if (node.databaseWorkspace) {
       node.databaseWorkspace.engine = flavor;
       node.databaseWorkspace.version = nextConfig.version;
+      if (!node.databaseWorkspace.backupPlan) {
+        node.databaseWorkspace.backupPlan = buildDatabaseBackupPlan(node, nextConfig);
+      }
+      node.databaseWorkspace.backupPlan = {
+        ...node.databaseWorkspace.backupPlan,
+        target: nextConfig.backupTarget || node.databaseWorkspace.backupPlan.target,
+      };
     }
 
     return node;
@@ -1679,6 +1750,7 @@
       databaseId: selectedDatabaseId || '',
       tableId: selectedTableId || '',
       tab: current ? current.tab : 'rows',
+      page: current ? current.page || 'browse' : 'browse',
       configDraft: current ? { ...current.configDraft } : { ...node.databaseConfig },
       saveState: current ? current.saveState : 'idle',
       error: current ? current.error : '',
@@ -2181,8 +2253,149 @@
     `;
   }
 
+  function renderDatabaseBackupPanel(node, database, view) {
+    const workspace = node.databaseWorkspace || {};
+    const plan = workspace.backupPlan || buildDatabaseBackupPlan(node, node.databaseConfig || {});
+    const draft = view.configDraft || node.databaseConfig || {};
+    const policyOptions = ['PITR / Hourly', 'Snapshot / Daily', 'Snapshot / 6 Hours'];
+    const statusLabel = plan.status === 'protected' ? 'Protected' : plan.status === 'issue' ? 'Issue' : 'Pending';
+
+    return `
+      <div class="db-backup-page">
+        <section class="db-backup-overview">
+          <div class="db-backup-card">
+            <span>状态</span>
+            <strong>${escapeHtml(statusLabel)}</strong>
+            <em>最近成功：${escapeHtml(plan.lastSuccessAt)}</em>
+          </div>
+          <div class="db-backup-card">
+            <span>下次执行</span>
+            <strong>${escapeHtml(plan.nextRunAt)}</strong>
+            <em>${escapeHtml(draft.backupPolicy || node.databaseConfig.backupPolicy || 'PITR / Hourly')}</em>
+          </div>
+          <div class="db-backup-card">
+            <span>备份存储</span>
+            <strong>${escapeHtml(plan.storageUsed)}</strong>
+            <em>${escapeHtml(plan.target)}</em>
+          </div>
+          <div class="db-backup-card">
+            <span>PITR</span>
+            <strong>${escapeHtml(plan.pointInTime)}</strong>
+            <em>${escapeHtml(database.name)}</em>
+          </div>
+        </section>
+
+        <section class="db-backup-layout">
+          <div class="db-panel">
+            <div class="db-backup-section">
+              <div class="db-backup-section-head">
+                <strong>备份策略</strong>
+                <span>自动策略与保留周期</span>
+              </div>
+
+              <div class="db-backup-form">
+                <label class="db-config-label">
+                  <span>策略</span>
+                  <select class="agui-input" data-db-config-field="backupPolicy">
+                    ${policyOptions
+                      .map(
+                        (option) => `
+                          <option value="${escapeHtml(option)}" ${String(draft.backupPolicy || '').trim() === option ? 'selected' : ''}>
+                            ${escapeHtml(option)}
+                          </option>
+                        `,
+                      )
+                      .join('')}
+                  </select>
+                </label>
+                <label class="db-config-label">
+                  <span>保留周期</span>
+                  <input class="agui-input" type="text" value="${escapeHtml(draft.backupRetention || '')}" data-db-config-field="backupRetention" />
+                </label>
+                <label class="db-config-label">
+                  <span>执行窗口</span>
+                  <input class="agui-input" type="text" value="${escapeHtml(draft.backupWindow || '')}" data-db-config-field="backupWindow" />
+                </label>
+                <label class="db-config-label">
+                  <span>备份目标</span>
+                  <input class="agui-input" type="text" value="${escapeHtml(draft.backupTarget || '')}" data-db-config-field="backupTarget" />
+                </label>
+              </div>
+
+              <div class="db-backup-inline-actions">
+                <button type="button" class="db-primary-button" data-db-action="run-backup-now">立即备份</button>
+                <button type="button" class="db-ghost-button" data-db-action="simulate-restore">恢复演练</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="db-panel">
+            <div class="db-backup-section">
+              <div class="db-backup-section-head">
+                <strong>恢复点</strong>
+                <span>选择一个时间点进行恢复</span>
+              </div>
+              <div class="db-backup-list">
+                ${plan.recoveryPoints
+                  .map(
+                    (point) => `
+                      <div class="db-backup-list-item">
+                        <strong>${escapeHtml(point.label)}</strong>
+                        <span>${escapeHtml(point.time)}</span>
+                        <em>${escapeHtml(point.note)}</em>
+                      </div>
+                    `,
+                  )
+                  .join('')}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="db-panel">
+          <div class="db-backup-section">
+            <div class="db-backup-section-head">
+              <strong>备份任务</strong>
+              <span>最近执行记录</span>
+            </div>
+            <div class="db-backup-job-list">
+              ${plan.jobs
+                .map(
+                  (job) => `
+                    <div class="db-backup-job-row">
+                      <div class="db-backup-job-main">
+                        <strong>${escapeHtml(job.type)}</strong>
+                        <span>${escapeHtml(job.scope)}</span>
+                      </div>
+                      <div class="db-backup-job-meta">
+                        <span>${escapeHtml(job.startedAt)}</span>
+                        <span>${escapeHtml(job.duration)}</span>
+                        <span>${escapeHtml(job.size)}</span>
+                        <em class="db-job-status ${escapeHtml(job.status)}">${escapeHtml(job.status)}</em>
+                      </div>
+                    </div>
+                  `,
+                )
+                .join('')}
+            </div>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
   function databaseConfigChanged(node, draft) {
-    const fields = ['instanceSpec', 'cpu', 'memory', 'replicas', 'storage'];
+    const fields = [
+      'instanceSpec',
+      'cpu',
+      'memory',
+      'replicas',
+      'storage',
+      'backupPolicy',
+      'backupRetention',
+      'backupWindow',
+      'backupTarget',
+    ];
     return fields.some((field) => String((node.databaseConfig || {})[field]) !== String((draft || {})[field]));
   }
 
@@ -2259,6 +2472,10 @@
       memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
       replicas: String((view.configDraft && view.configDraft.replicas) || '').trim(),
       storage: String((view.configDraft && view.configDraft.storage) || '').trim(),
+      backupPolicy: String((view.configDraft && view.configDraft.backupPolicy) || '').trim(),
+      backupRetention: String((view.configDraft && view.configDraft.backupRetention) || '').trim(),
+      backupWindow: String((view.configDraft && view.configDraft.backupWindow) || '').trim(),
+      backupTarget: String((view.configDraft && view.configDraft.backupTarget) || '').trim(),
     };
     draft.instanceSpec = resolveDatabaseInstanceSpec(
       node.databaseConfig.flavor,
@@ -2281,6 +2498,12 @@
       usedStorage: estimateUsedDisk(draft.storage || node.databaseConfig.storage),
     };
     syncDatabaseNode(node);
+    if (node.databaseWorkspace && node.databaseWorkspace.backupPlan) {
+      node.databaseWorkspace.backupPlan = {
+        ...node.databaseWorkspace.backupPlan,
+        target: node.databaseConfig.backupTarget || node.databaseWorkspace.backupPlan.target,
+      };
+    }
     state.databaseView.configDraft = { ...node.databaseConfig };
     state.databaseView.saveState = 'done';
     state.databaseView.error = '';
@@ -2290,6 +2513,57 @@
       `数据库配置已更新：${node.title} ${node.databaseConfig.version} 调整为 ${node.databaseConfig.replicas} 副本，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，存储 ${node.databaseConfig.storage}。`,
     );
     renderAll();
+  }
+
+  function runDatabaseBackupNow() {
+    const context = activeDatabaseContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, database, workspace } = context;
+    if (!workspace.backupPlan) {
+      workspace.backupPlan = buildDatabaseBackupPlan(node, node.databaseConfig || {});
+    }
+
+    const now = '2026-04-07 14:52';
+    workspace.backupPlan.lastSuccessAt = now;
+    workspace.backupPlan.nextRunAt = '2026-04-07 16:00';
+    workspace.backupPlan.jobs = [
+      {
+        id: createId('backup'),
+        type: '手动备份',
+        scope: `${database.name} / full`,
+        status: 'success',
+        startedAt: now,
+        duration: '1m 18s',
+        size: '12.8 GiB',
+      },
+      ...(workspace.backupPlan.jobs || []),
+    ].slice(0, 5);
+    workspace.backupPlan.recoveryPoints = [
+      {
+        id: createId('restore'),
+        label: '刚刚创建的手动备份',
+        time: now,
+        note: '适合立即回滚本次变更',
+      },
+      ...(workspace.backupPlan.recoveryPoints || []),
+    ].slice(0, 4);
+
+    addMessage('assistant', `已为 ${database.name} 创建一条新的手动备份，可在备份页直接选择恢复点。`);
+    renderAll();
+  }
+
+  function simulateDatabaseRestore() {
+    const context = activeDatabaseContext();
+    if (!context) {
+      return;
+    }
+
+    const { database } = context;
+    addMessage('assistant', `已开始 ${database.name} 的恢复演练：将校验最近一次全量备份与 PITR 链路，不影响线上读写。`);
+    renderChat();
   }
 
   function saveEntryConfig() {
@@ -3981,19 +4255,8 @@
         }
 
         const point = clientToCanvasPoint(event.clientX, event.clientY);
-        const width = card.offsetWidth;
-        const height = card.offsetHeight;
-        const world = canvasWorldSize();
-        node.x = clamp(
-          point.x - state.dragging.offsetX,
-          20,
-          world.width - width - 20,
-        );
-        node.y = clamp(
-          point.y - state.dragging.offsetY,
-          20,
-          world.height - height - 30,
-        );
+        node.x = point.x - state.dragging.offsetX;
+        node.y = point.y - state.dragging.offsetY;
         card.style.left = `${node.x}px`;
         card.style.top = `${node.y}px`;
         scheduleEdgeRender();
@@ -4094,14 +4357,18 @@
     }
 
     const { node, workspace, database, table, view } = context;
+    const activePage = view.page === 'backup' ? 'backup' : 'browse';
     const activeTab = ['rows', 'schema', 'indexes'].includes(view.tab) ? view.tab : 'rows';
-    const tableContent = table
-      ? activeTab === 'schema'
-        ? renderDatabaseSchemaPanel(table)
-        : activeTab === 'indexes'
-        ? renderDatabaseIndexesPanel(table)
-        : renderDatabaseRowsPanel(table)
-      : renderDatabaseErPanel(database);
+    const tableContent =
+      activePage === 'backup'
+        ? renderDatabaseBackupPanel(node, database, view)
+        : table
+        ? activeTab === 'schema'
+          ? renderDatabaseSchemaPanel(table)
+          : activeTab === 'indexes'
+          ? renderDatabaseIndexesPanel(table)
+          : renderDatabaseRowsPanel(table)
+        : renderDatabaseErPanel(database);
 
     dom.canvasWorkspace.hidden = false;
     dom.canvasWorkspace.className = 'canvas-workspace active';
@@ -4111,6 +4378,22 @@
           <h2 class="db-workspace-title">${escapeHtml(`${node.title} ${node.databaseConfig.version}`)}</h2>
         </div>
         <div class="db-workspace-actions">
+          <button
+            type="button"
+            class="db-ghost-button ${activePage === 'browse' ? 'active' : ''}"
+            data-db-action="select-page"
+            data-page="browse"
+          >
+            数据浏览
+          </button>
+          <button
+            type="button"
+            class="db-ghost-button ${activePage === 'backup' ? 'active' : ''}"
+            data-db-action="select-page"
+            data-page="backup"
+          >
+            备份
+          </button>
           <button type="button" class="db-ghost-button" data-db-action="toggle-import">
             ${view.importOpen ? '收起导入' : '导入数据'}
           </button>
@@ -4168,18 +4451,18 @@
         </aside>
 
         <section class="db-main">
-          ${view.importOpen ? renderDatabaseImportPanel(database, view) : ''}
+          ${view.importOpen && activePage === 'browse' ? renderDatabaseImportPanel(database, view) : ''}
           <div class="db-main-header">
             <div>
               <h3 class="db-main-title">
-                <span class="material-symbols-outlined db-entity-icon">${table ? 'table_rows' : 'account_tree'}</span>
-                <span>${escapeHtml(table ? table.name : database.name)}</span>
+                <span class="material-symbols-outlined db-entity-icon">${activePage === 'backup' ? 'archive' : table ? 'table_rows' : 'account_tree'}</span>
+                <span>${escapeHtml(activePage === 'backup' ? `${database.name} 备份管理` : table ? table.name : database.name)}</span>
               </h3>
             </div>
           </div>
 
           ${
-            table
+            activePage === 'browse' && table
               ? `<div class="db-tabs">
                   <button
                     type="button"
@@ -5704,6 +5987,12 @@
           return;
         }
 
+        if (button.dataset.dbAction === 'select-page') {
+          state.databaseView.page = button.dataset.page === 'backup' ? 'backup' : 'browse';
+          renderAll();
+          return;
+        }
+
         if (button.dataset.dbAction === 'toggle-import') {
           state.databaseView.importOpen = !state.databaseView.importOpen;
           state.databaseView.importError = '';
@@ -5721,6 +6010,16 @@
 
         if (button.dataset.dbAction === 'execute-import') {
           executeDatabaseImport();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'run-backup-now') {
+          runDatabaseBackupNow();
+          return;
+        }
+
+        if (button.dataset.dbAction === 'simulate-restore') {
+          simulateDatabaseRestore();
         }
       });
 
@@ -7370,36 +7669,7 @@
   }
 
   function clampCanvasPan(x, y, scale = state.canvasViewport.scale) {
-    if (!dom.canvasStage || !dom.canvasWorld) {
-      return { x, y };
-    }
-
-    const stageWidth = dom.canvasStage.clientWidth || 0;
-    const stageHeight = dom.canvasStage.clientHeight || 0;
-    const world = canvasWorldSize();
-    const scaledWidth = world.width * scale;
-    const scaledHeight = world.height * scale;
-
-    let minX = stageWidth - scaledWidth - CANVAS_PAN_MARGIN;
-    let maxX = CANVAS_PAN_MARGIN;
-    if (scaledWidth + CANVAS_PAN_MARGIN * 2 <= stageWidth) {
-      const centeredX = (stageWidth - scaledWidth) / 2;
-      minX = centeredX - CANVAS_PAN_MARGIN;
-      maxX = centeredX + CANVAS_PAN_MARGIN;
-    }
-
-    let minY = stageHeight - scaledHeight - CANVAS_PAN_MARGIN;
-    let maxY = CANVAS_PAN_MARGIN;
-    if (scaledHeight + CANVAS_PAN_MARGIN * 2 <= stageHeight) {
-      const centeredY = (stageHeight - scaledHeight) / 2;
-      minY = centeredY - CANVAS_PAN_MARGIN;
-      maxY = centeredY + CANVAS_PAN_MARGIN;
-    }
-
-    return {
-      x: clamp(x, minX, maxX),
-      y: clamp(y, minY, maxY),
-    };
+    return { x, y };
   }
 
   function applyCanvasViewport() {
@@ -7414,6 +7684,8 @@
 
     dom.canvasWorld.style.transformOrigin = '0 0';
     dom.canvasWorld.style.transform = `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`;
+    dom.canvasStage.style.backgroundSize = `${32 * viewport.scale}px ${32 * viewport.scale}px`;
+    dom.canvasStage.style.backgroundPosition = `${viewport.x}px ${viewport.y}px`;
     dom.canvasStage.classList.toggle('canvas-pan-enabled', canvasInteractionsEnabled());
     dom.canvasStage.classList.toggle('panning', Boolean(viewport.panningPointerId));
   }

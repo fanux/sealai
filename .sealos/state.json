@@ -10,7 +10,7 @@
     "repo_name": "sealai",
     "url": "https://sealai-yjhjqxcq.sealosgzg.site",
     "deployed_at": "2026-04-01T07:26:22Z",
-    "last_updated_at": "2026-04-03T10:07:16Z"
+    "last_updated_at": "2026-04-07T06:38:33.654Z"
   },
   "history": [
     {
@@ -65,6 +65,15 @@
       "method": "kubectl-configmap-mount",
       "status": "success",
       "note": "Synced the latest project-list onboarding and compact navigation UI to the live Sealos app via ConfigMap and rollout restart."
+    },
+    {
+      "at": "2026-04-07T06:38:33.654Z",
+      "action": "sync-public-assets",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "configmap": "sealai-ymwsyhbd-public",
+      "method": "kubectl-configmap-replace",
+      "status": "success",
+      "note": "Synced the latest infinite-canvas fix and viewport updates to the live Sealos app via ConfigMap replace and rollout restart."
     }
   ]
 }

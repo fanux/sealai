@@ -538,6 +538,11 @@ button {
   width: 100%;
   height: 100%;
   overflow: hidden;
+  background-image:
+    linear-gradient(rgba(152, 160, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(152, 160, 255, 0.05) 1px, transparent 1px);
+  background-size: 32px 32px;
+  background-position: 0 0;
 }
 
 .canvas-stage.workspace-mode {
@@ -1010,6 +1015,124 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
+}
+
+.db-backup-page {
+  display: grid;
+  gap: 12px;
+}
+
+.db-backup-overview {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.db-backup-card {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(11, 20, 41, 0.92);
+}
+
+.db-backup-card span,
+.db-backup-card em,
+.db-backup-section-head span,
+.db-backup-list-item span,
+.db-backup-list-item em,
+.db-backup-job-main span,
+.db-backup-job-meta span {
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-backup-card strong,
+.db-backup-section-head strong,
+.db-backup-list-item strong,
+.db-backup-job-main strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.db-backup-card em,
+.db-backup-list-item em,
+.db-job-status {
+  font-style: normal;
+}
+
+.db-backup-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
+  gap: 12px;
+}
+
+.db-backup-section {
+  display: grid;
+  gap: 12px;
+  padding: 12px;
+}
+
+.db-backup-section-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.db-backup-form {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.db-backup-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-backup-list,
+.db-backup-job-list {
+  display: grid;
+  gap: 8px;
+}
+
+.db-backup-list-item,
+.db-backup-job-row {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 16, 32, 0.82);
+}
+
+.db-backup-job-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.db-backup-job-main,
+.db-backup-job-meta {
+  display: grid;
+  gap: 4px;
+}
+
+.db-backup-job-meta {
+  justify-items: end;
+}
+
+.db-job-status.success {
+  color: var(--success);
+}
+
+.db-job-status.running {
+  color: var(--warning);
+}
+
+.db-job-status.issue {
+  color: #ff9ab1;
 }
 
 .db-main-stats {
@@ -1796,10 +1919,7 @@ button {
 }
 
 .canvas-grid {
-  background-image:
-    linear-gradient(rgba(152, 160, 255, 0.05) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(152, 160, 255, 0.05) 1px, transparent 1px);
-  background-size: 32px 32px;
+  display: none;
 }
 
 .edge-layer {
@@ -2980,6 +3100,12 @@ button {
   }
 
   .db-main-stats {
+    grid-template-columns: 1fr;
+  }
+
+  .db-backup-overview,
+  .db-backup-layout,
+  .db-backup-form {
     grid-template-columns: 1fr;
   }
 
