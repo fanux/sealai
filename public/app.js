@@ -40,6 +40,13 @@
 
   const PROJECT_FILTER = FILTERS.find((filter) => filter.id === 'projects') || FILTERS[0];
   const CHAT_TOOL_FILTERS = FILTERS.filter((filter) => filter.id !== 'projects');
+  const CHAT_TOOL_HINTS = {
+    'github-ui': '从 GitHub 源码部署任意项目到 Sealos 上。',
+    'docker-ui': '部署任意 Docker 镜像到 Sealos 上。',
+    'database-ui': '在 Sealos 上运行 MySQL、PostgreSQL、MongoDB 和 Redis 数据库。',
+    'app-ui': '部署任意已封装好的应用到 Sealos 上。',
+    'devbox-ui': '为用户创建开发环境，例如 Next.js、Cloud Code、Codex、Golang 或 Python 开发环境。',
+  };
   const RECENT_PROJECT_LIMIT = 5;
   const PROJECT_CREATE_GUIDE_WINDOW_MS = 3 * 60 * 1000;
   const CANVAS_SCALE_MIN = 0.6;
@@ -350,6 +357,8 @@
     linking: null,
     planModalOpen: false,
     planOfferEndsAt: Date.now() + PLAN_OFFER_DURATION_MS,
+    hoveredToolAction: '',
+    hoveredToolMessageId: null,
   };
 
   let rafHandle = 0;
@@ -1336,10 +1345,55 @@
     return slugifyText(title.replace(/\b(cluster|data|postgresql|ha)\b/gi, '')) || 'workspace';
   }
 
+  function normalizeBackupPolicy(value) {
+    const raw = String(value || '').trim();
+    const lower = raw.toLowerCase();
+    if (!raw) {
+      return '按小时';
+    }
+    if (raw === '按小时' || lower.includes('hour')) {
+      return '按小时';
+    }
+    if (raw === '按天' || lower.includes('day')) {
+      return '按天';
+    }
+    if (raw === '按周' || lower.includes('week')) {
+      return '按周';
+    }
+    return raw;
+  }
+
+  function backupScheduleDefaults(policy) {
+    const normalized = normalizeBackupPolicy(policy);
+    if (normalized === '按天') {
+      return {
+        backupHour: '02',
+        backupMinute: '00',
+        backupWeekday: '周一',
+      };
+    }
+    if (normalized === '按周') {
+      return {
+        backupHour: '02',
+        backupMinute: '00',
+        backupWeekday: '周一',
+      };
+    }
+    return {
+      backupHour: '00',
+      backupMinute: '00',
+      backupWeekday: '周一',
+    };
+  }
+
   function createDatabaseConfig(flavor, options = {}) {
     const instanceSpec = options.instanceSpec || inferDatabaseInstanceSpec(options.node, flavor);
     const profile = databaseSpecProfile(instanceSpec);
     const storage = String(options.storage || (flavor === 'PostgreSQL' ? '200Gi' : '100Gi'));
+    const normalizedBackupPolicy = normalizeBackupPolicy(
+      options.backupPolicy || ((options.node && options.node.details && options.node.details.backup) || '按小时')
+    );
+    const scheduleDefaults = backupScheduleDefaults(normalizedBackupPolicy);
 
     return {
       flavor,
@@ -1352,25 +1406,20 @@
       replicas: String(options.replicas || inferDatabaseReplicas(options.node, '2')),
       storage,
       usedStorage: String(options.usedStorage || estimateUsedDisk(storage)),
-      backupPolicy: String(
-        options.backupPolicy ||
-          ((options.node && options.node.details && options.node.details.backup) || 'PITR / Hourly')
-      ),
+      backupPolicy: normalizedBackupPolicy,
       backupRetention: String(options.backupRetention || '7 天'),
       backupWindow: String(options.backupWindow || '02:00 - 03:00 UTC+8'),
-      backupTarget: String(options.backupTarget || '对象存储 /sealai-backup'),
+      backupHour: String(options.backupHour || scheduleDefaults.backupHour),
+      backupMinute: String(options.backupMinute || scheduleDefaults.backupMinute),
+      backupWeekday: String(options.backupWeekday || scheduleDefaults.backupWeekday),
+      backupTarget: String(options.backupTarget || 'OSS / sealai-backup'),
     };
   }
 
   function buildDatabaseBackupPlan(node, config) {
     const databaseName = inferDatabaseName(node);
     return {
-      status: 'protected',
-      lastSuccessAt: '2026-04-07 13:48',
-      nextRunAt: '2026-04-07 15:00',
-      pointInTime: '开启，保留 72 小时',
-      storageUsed: '86.4 GiB',
-      target: config.backupTarget || '对象存储 /sealai-backup',
+      target: config.backupTarget || 'OSS / sealai-backup',
       jobs: [
         {
           id: 'backup-20260407-1348',
@@ -1383,11 +1432,11 @@
         },
         {
           id: 'backup-20260407-0900',
-          type: 'PITR 基线',
-          scope: `${databaseName} / wal`,
-          status: 'running',
+          type: '自动备份',
+          scope: `${databaseName} / incremental`,
+          status: 'success',
           startedAt: '2026-04-07 09:00',
-          duration: '持续中',
+          duration: '58s',
           size: '6.8 GiB',
         },
         {
@@ -1398,26 +1447,6 @@
           startedAt: '2026-04-06 23:00',
           duration: '1m 42s',
           size: '11.9 GiB',
-        },
-      ],
-      recoveryPoints: [
-        {
-          id: 'restore-1',
-          label: '最近成功快照',
-          time: '2026-04-07 13:48',
-          note: '适合整库回滚',
-        },
-        {
-          id: 'restore-2',
-          label: '今天 09:00 基线',
-          time: '2026-04-07 09:00',
-          note: '可配合 PITR 恢复到任意分钟',
-        },
-        {
-          id: 'restore-3',
-          label: '昨晚手动备份',
-          time: '2026-04-06 23:00',
-          note: '适合变更前恢复',
         },
       ],
     };
@@ -1751,6 +1780,7 @@
       tableId: selectedTableId || '',
       tab: current ? current.tab : 'rows',
       page: current ? current.page || 'browse' : 'browse',
+      backupMode: current ? current.backupMode || 'manual' : 'manual',
       configDraft: current ? { ...current.configDraft } : { ...node.databaseConfig },
       saveState: current ? current.saveState : 'idle',
       error: current ? current.error : '',
@@ -2257,105 +2287,180 @@
     const workspace = node.databaseWorkspace || {};
     const plan = workspace.backupPlan || buildDatabaseBackupPlan(node, node.databaseConfig || {});
     const draft = view.configDraft || node.databaseConfig || {};
-    const policyOptions = ['PITR / Hourly', 'Snapshot / Daily', 'Snapshot / 6 Hours'];
-    const statusLabel = plan.status === 'protected' ? 'Protected' : plan.status === 'issue' ? 'Issue' : 'Pending';
+    const cycleOptions = ['按小时', '按天', '按周'];
+    const hourOptions = Array.from({ length: 24 }, (_, index) => String(index).padStart(2, '0'));
+    const minuteOptions = Array.from({ length: 60 }, (_, index) => String(index).padStart(2, '0'));
+    const weekdayOptions = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+    const selectedPolicy = normalizeBackupPolicy(draft.backupPolicy || node.databaseConfig.backupPolicy || '按小时');
+    const backupMode = view.backupMode === 'policy' ? 'policy' : 'manual';
+    const scheduleDefaults = backupScheduleDefaults(selectedPolicy);
+    const selectedHour = String(draft.backupHour || node.databaseConfig.backupHour || scheduleDefaults.backupHour);
+    const selectedMinute = String(draft.backupMinute || node.databaseConfig.backupMinute || scheduleDefaults.backupMinute);
+    const selectedWeekday = String(
+      draft.backupWeekday || node.databaseConfig.backupWeekday || scheduleDefaults.backupWeekday,
+    );
 
     return `
       <div class="db-backup-page">
-        <section class="db-backup-overview">
-          <div class="db-backup-card">
-            <span>状态</span>
-            <strong>${escapeHtml(statusLabel)}</strong>
-            <em>最近成功：${escapeHtml(plan.lastSuccessAt)}</em>
-          </div>
-          <div class="db-backup-card">
-            <span>下次执行</span>
-            <strong>${escapeHtml(plan.nextRunAt)}</strong>
-            <em>${escapeHtml(draft.backupPolicy || node.databaseConfig.backupPolicy || 'PITR / Hourly')}</em>
-          </div>
-          <div class="db-backup-card">
-            <span>备份存储</span>
-            <strong>${escapeHtml(plan.storageUsed)}</strong>
-            <em>${escapeHtml(plan.target)}</em>
-          </div>
-          <div class="db-backup-card">
-            <span>PITR</span>
-            <strong>${escapeHtml(plan.pointInTime)}</strong>
-            <em>${escapeHtml(database.name)}</em>
-          </div>
-        </section>
-
-        <section class="db-backup-layout">
-          <div class="db-panel">
-            <div class="db-backup-section">
-              <div class="db-backup-section-head">
-                <strong>备份策略</strong>
-                <span>自动策略与保留周期</span>
-              </div>
-
-              <div class="db-backup-form">
-                <label class="db-config-label">
-                  <span>策略</span>
-                  <select class="agui-input" data-db-config-field="backupPolicy">
-                    ${policyOptions
-                      .map(
-                        (option) => `
-                          <option value="${escapeHtml(option)}" ${String(draft.backupPolicy || '').trim() === option ? 'selected' : ''}>
-                            ${escapeHtml(option)}
-                          </option>
-                        `,
-                      )
-                      .join('')}
-                  </select>
-                </label>
-                <label class="db-config-label">
-                  <span>保留周期</span>
-                  <input class="agui-input" type="text" value="${escapeHtml(draft.backupRetention || '')}" data-db-config-field="backupRetention" />
-                </label>
-                <label class="db-config-label">
-                  <span>执行窗口</span>
-                  <input class="agui-input" type="text" value="${escapeHtml(draft.backupWindow || '')}" data-db-config-field="backupWindow" />
-                </label>
-                <label class="db-config-label">
-                  <span>备份目标</span>
-                  <input class="agui-input" type="text" value="${escapeHtml(draft.backupTarget || '')}" data-db-config-field="backupTarget" />
-                </label>
-              </div>
-
-              <div class="db-backup-inline-actions">
-                <button type="button" class="db-primary-button" data-db-action="run-backup-now">立即备份</button>
-                <button type="button" class="db-ghost-button" data-db-action="simulate-restore">恢复演练</button>
-              </div>
+        <section class="db-panel">
+          <div class="db-backup-section">
+            <div class="db-backup-section-head">
+              <strong>备份方式</strong>
+              <span>手动备份与备份策略二选一</span>
             </div>
-          </div>
-
-          <div class="db-panel">
-            <div class="db-backup-section">
-              <div class="db-backup-section-head">
-                <strong>恢复点</strong>
-                <span>选择一个时间点进行恢复</span>
-              </div>
-              <div class="db-backup-list">
-                ${plan.recoveryPoints
-                  .map(
-                    (point) => `
-                      <div class="db-backup-list-item">
-                        <strong>${escapeHtml(point.label)}</strong>
-                        <span>${escapeHtml(point.time)}</span>
-                        <em>${escapeHtml(point.note)}</em>
-                      </div>
-                    `,
-                  )
-                  .join('')}
-              </div>
+            <div class="db-tabs">
+              <button
+                type="button"
+                class="db-tab-button ${backupMode === 'manual' ? 'active' : ''}"
+                data-db-action="select-backup-mode"
+                data-backup-mode="manual"
+              >
+                手动备份
+              </button>
+              <button
+                type="button"
+                class="db-tab-button ${backupMode === 'policy' ? 'active' : ''}"
+                data-db-action="select-backup-mode"
+                data-backup-mode="policy"
+              >
+                备份策略
+              </button>
             </div>
+            ${
+              backupMode === 'manual'
+                ? `
+                  <div class="db-backup-mode-panel">
+                    <p class="db-backup-mode-copy">立即创建一份最新备份，并可在上方备份列表中恢复。</p>
+                    <div class="db-backup-inline-actions">
+                      <button type="button" class="db-primary-button" data-db-action="run-backup-now">立即备份</button>
+                    </div>
+                  </div>
+                `
+                : `
+                  <div class="db-backup-mode-panel">
+                    <div class="db-backup-form">
+                      <label class="db-config-label">
+                        <span>备份周期</span>
+                        <select class="agui-input" data-db-config-field="backupPolicy">
+                          ${cycleOptions
+                            .map(
+                              (option) => `
+                                <option value="${escapeHtml(option)}" ${selectedPolicy === option ? 'selected' : ''}>
+                                  ${escapeHtml(option)}
+                                </option>
+                              `,
+                            )
+                            .join('')}
+                        </select>
+                      </label>
+                      <label class="db-config-label">
+                        <span>保留天数</span>
+                        <input class="agui-input" type="text" value="${escapeHtml(draft.backupRetention || '')}" data-db-config-field="backupRetention" />
+                      </label>
+                      ${
+                        selectedPolicy === '按小时'
+                          ? `
+                            <label class="db-config-label db-backup-form-span">
+                              <span>每小时的分钟</span>
+                              <select class="agui-input" data-db-config-field="backupMinute">
+                                ${minuteOptions
+                                  .map(
+                                    (option) => `
+                                      <option value="${option}" ${selectedMinute === option ? 'selected' : ''}>${option} 分</option>
+                                    `,
+                                  )
+                                  .join('')}
+                              </select>
+                            </label>
+                          `
+                          : ''
+                      }
+                      ${
+                        selectedPolicy === '按天'
+                          ? `
+                            <label class="db-config-label">
+                              <span>开始小时</span>
+                              <select class="agui-input" data-db-config-field="backupHour">
+                                ${hourOptions
+                                  .map(
+                                    (option) => `
+                                      <option value="${option}" ${selectedHour === option ? 'selected' : ''}>${option} 时</option>
+                                    `,
+                                  )
+                                  .join('')}
+                              </select>
+                            </label>
+                            <label class="db-config-label">
+                              <span>开始分钟</span>
+                              <select class="agui-input" data-db-config-field="backupMinute">
+                                ${minuteOptions
+                                  .map(
+                                    (option) => `
+                                      <option value="${option}" ${selectedMinute === option ? 'selected' : ''}>${option} 分</option>
+                                    `,
+                                  )
+                                  .join('')}
+                              </select>
+                            </label>
+                          `
+                          : ''
+                      }
+                      ${
+                        selectedPolicy === '按周'
+                          ? `
+                            <label class="db-config-label">
+                              <span>周几</span>
+                              <select class="agui-input" data-db-config-field="backupWeekday">
+                                ${weekdayOptions
+                                  .map(
+                                    (option) => `
+                                      <option value="${escapeHtml(option)}" ${selectedWeekday === option ? 'selected' : ''}>${escapeHtml(option)}</option>
+                                    `,
+                                  )
+                                  .join('')}
+                              </select>
+                            </label>
+                            <label class="db-config-label">
+                              <span>开始小时</span>
+                              <select class="agui-input" data-db-config-field="backupHour">
+                                ${hourOptions
+                                  .map(
+                                    (option) => `
+                                      <option value="${option}" ${selectedHour === option ? 'selected' : ''}>${option} 时</option>
+                                    `,
+                                  )
+                                  .join('')}
+                              </select>
+                            </label>
+                            <label class="db-config-label db-backup-form-span">
+                              <span>开始分钟</span>
+                              <select class="agui-input" data-db-config-field="backupMinute">
+                                ${minuteOptions
+                                  .map(
+                                    (option) => `
+                                      <option value="${option}" ${selectedMinute === option ? 'selected' : ''}>${option} 分</option>
+                                    `,
+                                  )
+                                  .join('')}
+                              </select>
+                            </label>
+                          `
+                          : ''
+                      }
+                    </div>
+                    <div class="db-backup-inline-actions">
+                      <button type="button" class="db-primary-button" data-db-action="run-backup-now">开始备份</button>
+                    </div>
+                  </div>
+                `
+            }
           </div>
         </section>
 
         <section class="db-panel">
           <div class="db-backup-section">
             <div class="db-backup-section-head">
-              <strong>备份任务</strong>
+              <strong>备份列表</strong>
               <span>最近执行记录</span>
             </div>
             <div class="db-backup-job-list">
@@ -2363,15 +2468,20 @@
                 .map(
                   (job) => `
                     <div class="db-backup-job-row">
-                      <div class="db-backup-job-main">
-                        <strong>${escapeHtml(job.type)}</strong>
-                        <span>${escapeHtml(job.scope)}</span>
+                      <div class="db-backup-job-message">
+                        <div class="db-backup-job-line">
+                          <strong>${escapeHtml(job.type)}</strong>
+                          <em class="db-job-status ${escapeHtml(job.status)}">${escapeHtml(job.status)}</em>
+                        </div>
+                        <div class="db-backup-job-line db-backup-job-line-meta">
+                          <span>${escapeHtml(job.scope)}</span>
+                          <span>${escapeHtml(job.startedAt)}</span>
+                          <span>${escapeHtml(job.duration)}</span>
+                          <span>${escapeHtml(job.size)}</span>
+                        </div>
                       </div>
-                      <div class="db-backup-job-meta">
-                        <span>${escapeHtml(job.startedAt)}</span>
-                        <span>${escapeHtml(job.duration)}</span>
-                        <span>${escapeHtml(job.size)}</span>
-                        <em class="db-job-status ${escapeHtml(job.status)}">${escapeHtml(job.status)}</em>
+                      <div class="db-backup-job-actions">
+                        <button type="button" class="db-ghost-button" data-db-action="restore-backup" data-backup-id="${escapeHtml(job.id)}">恢复</button>
                       </div>
                     </div>
                   `,
@@ -2393,7 +2503,9 @@
       'storage',
       'backupPolicy',
       'backupRetention',
-      'backupWindow',
+      'backupHour',
+      'backupMinute',
+      'backupWeekday',
       'backupTarget',
     ];
     return fields.some((field) => String((node.databaseConfig || {})[field]) !== String((draft || {})[field]));
@@ -2472,9 +2584,12 @@
       memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
       replicas: String((view.configDraft && view.configDraft.replicas) || '').trim(),
       storage: String((view.configDraft && view.configDraft.storage) || '').trim(),
-      backupPolicy: String((view.configDraft && view.configDraft.backupPolicy) || '').trim(),
+      backupPolicy: normalizeBackupPolicy(String((view.configDraft && view.configDraft.backupPolicy) || '').trim()),
       backupRetention: String((view.configDraft && view.configDraft.backupRetention) || '').trim(),
       backupWindow: String((view.configDraft && view.configDraft.backupWindow) || '').trim(),
+      backupHour: String((view.configDraft && view.configDraft.backupHour) || '').trim(),
+      backupMinute: String((view.configDraft && view.configDraft.backupMinute) || '').trim(),
+      backupWeekday: String((view.configDraft && view.configDraft.backupWeekday) || '').trim(),
       backupTarget: String((view.configDraft && view.configDraft.backupTarget) || '').trim(),
     };
     draft.instanceSpec = resolveDatabaseInstanceSpec(
@@ -2528,7 +2643,6 @@
 
     const now = '2026-04-07 14:52';
     workspace.backupPlan.lastSuccessAt = now;
-    workspace.backupPlan.nextRunAt = '2026-04-07 16:00';
     workspace.backupPlan.jobs = [
       {
         id: createId('backup'),
@@ -2541,28 +2655,23 @@
       },
       ...(workspace.backupPlan.jobs || []),
     ].slice(0, 5);
-    workspace.backupPlan.recoveryPoints = [
-      {
-        id: createId('restore'),
-        label: '刚刚创建的手动备份',
-        time: now,
-        note: '适合立即回滚本次变更',
-      },
-      ...(workspace.backupPlan.recoveryPoints || []),
-    ].slice(0, 4);
 
-    addMessage('assistant', `已为 ${database.name} 创建一条新的手动备份，可在备份页直接选择恢复点。`);
+    addMessage('assistant', `已为 ${database.name} 创建一条新的手动备份，可在备份列表中直接恢复。`);
     renderAll();
   }
 
-  function simulateDatabaseRestore() {
+  function restoreDatabaseBackup(backupId) {
     const context = activeDatabaseContext();
     if (!context) {
       return;
     }
 
-    const { database } = context;
-    addMessage('assistant', `已开始 ${database.name} 的恢复演练：将校验最近一次全量备份与 PITR 链路，不影响线上读写。`);
+    const { database, workspace } = context;
+    const backup = ((workspace.backupPlan && workspace.backupPlan.jobs) || []).find((item) => item.id === backupId);
+    addMessage(
+      'assistant',
+      `已开始从 ${database.name} 的备份 ${backup ? `${backup.type} ${backup.startedAt}` : backupId} 执行恢复。`,
+    );
     renderChat();
   }
 
@@ -3312,7 +3421,7 @@
           y: 355,
           details: {
             connect: 'postgres://orders:••••@pg-ha.internal:5432/orders',
-            backup: '每小时快照 + PITR',
+            backup: '按小时',
             metrics: 'QPS 120 / 复制延迟 30ms',
           },
           databaseConfig: {
@@ -3325,7 +3434,9 @@
             usedMemory: '7.1Gi',
             replicas: '2',
             storage: '200Gi',
-            backupPolicy: 'PITR / Hourly',
+            backupPolicy: '按小时',
+            backupRetention: '7 天',
+            backupTarget: 'OSS / sealai-backup',
           },
           operations: ['查看连接串', '创建备份', '打开监控'],
         },
@@ -3360,20 +3471,7 @@
         { id: 'edge-demo-2', from: 'container-demo', to: 'db-demo', label: 'DATABASE_URL' },
         { id: 'edge-demo-3', from: 'devbox-demo', to: 'container-demo', label: 'Debug Tunnel' },
       ],
-      messages: [
-        {
-          id: createId('msg'),
-          role: 'assistant',
-          text:
-            '这是一个围绕云操作系统的原型：左侧是对象导航，中间是拓扑画布，右侧是 Agent 会话。你可以直接输入 GitHub 仓库、Docker 镜像、数据库需求或 DevBox 请求。',
-        },
-        {
-          id: createId('msg'),
-          role: 'assistant',
-          text:
-            '当前画布已放入一组示例对象，用于展示入口域名、运行实例、数据库和开发环境之间的关系。点击卡片可查看详情，拖拽可调整布局。',
-        },
-      ],
+      messages: [],
       timeline: [
         {
           id: createId('step'),
@@ -5077,6 +5175,40 @@
     dom.chatInput.placeholder = DEFAULT_CHAT_PLACEHOLDER;
   }
 
+  function clearToolHoverMessage() {
+    if (!state.hoveredToolMessageId) {
+      return;
+    }
+
+    state.messages = state.messages.filter((message) => message.id !== state.hoveredToolMessageId);
+    state.hoveredToolMessageId = null;
+  }
+
+  function showToolHoverMessage(action) {
+    const text = CHAT_TOOL_HINTS[action] || '';
+    if (!text) {
+      clearToolHoverMessage();
+      renderChat();
+      return;
+    }
+
+    const existing = state.hoveredToolMessageId ? getMessageById(state.hoveredToolMessageId) : null;
+    if (existing) {
+      existing.text = text;
+      renderChat();
+      return;
+    }
+
+    const message = {
+      id: createId('msg'),
+      role: 'assistant',
+      text,
+    };
+    state.messages.push(message);
+    state.hoveredToolMessageId = message.id;
+    renderChat();
+  }
+
   function formatDatabaseCell(value) {
     if (value === null || value === undefined) {
       return '-';
@@ -5672,6 +5804,41 @@
 
         handleToolbarAction(button.dataset.toolAction, button.dataset.shortcutPrompt || '');
       });
+
+      dom.chatToolDock.addEventListener('mouseover', (event) => {
+        const button = event.target.closest('[data-tool-action]');
+        if (!button) {
+          return;
+        }
+
+        const nextAction = button.dataset.toolAction || '';
+        if (state.hoveredToolAction === nextAction) {
+          return;
+        }
+
+        state.hoveredToolAction = nextAction;
+        showToolHoverMessage(nextAction);
+      });
+
+      dom.chatToolDock.addEventListener('mouseout', (event) => {
+        const button = event.target.closest('[data-tool-action]');
+        if (!button) {
+          return;
+        }
+
+        const related = event.relatedTarget;
+        if (related && button.contains(related)) {
+          return;
+        }
+
+        if (!state.hoveredToolAction) {
+          return;
+        }
+
+        state.hoveredToolAction = '';
+        clearToolHoverMessage();
+        renderChat();
+      });
     }
 
     dom.chatLog.addEventListener('input', (event) => {
@@ -5993,6 +6160,12 @@
           return;
         }
 
+        if (button.dataset.dbAction === 'select-backup-mode') {
+          state.databaseView.backupMode = button.dataset.backupMode === 'policy' ? 'policy' : 'manual';
+          renderCanvasWorkspace();
+          return;
+        }
+
         if (button.dataset.dbAction === 'toggle-import') {
           state.databaseView.importOpen = !state.databaseView.importOpen;
           state.databaseView.importError = '';
@@ -6018,12 +6191,34 @@
           return;
         }
 
-        if (button.dataset.dbAction === 'simulate-restore') {
-          simulateDatabaseRestore();
+        if (button.dataset.dbAction === 'restore-backup') {
+          restoreDatabaseBackup(button.dataset.backupId || '');
         }
       });
 
       dom.canvasWorkspace.addEventListener('input', (event) => {
+        const configInput = event.target.closest('[data-db-config-field]');
+        if (configInput && state.databaseView) {
+          let nextValue = configInput.value;
+          if (configInput.type === 'range') {
+            nextValue = databaseSliderValue(configInput.dataset.dbConfigField, configInput.value);
+          }
+
+          state.databaseView.configDraft[configInput.dataset.dbConfigField] =
+            configInput.dataset.dbConfigField === 'backupPolicy' ? normalizeBackupPolicy(nextValue) : nextValue;
+          if (configInput.dataset.dbConfigField === 'backupPolicy') {
+            const defaults = backupScheduleDefaults(state.databaseView.configDraft.backupPolicy);
+            state.databaseView.configDraft.backupHour = state.databaseView.configDraft.backupHour || defaults.backupHour;
+            state.databaseView.configDraft.backupMinute =
+              state.databaseView.configDraft.backupMinute || defaults.backupMinute;
+            state.databaseView.configDraft.backupWeekday =
+              state.databaseView.configDraft.backupWeekday || defaults.backupWeekday;
+          }
+          state.databaseView.saveState = 'editing';
+          state.databaseView.error = '';
+          return;
+        }
+
         const input = event.target.closest('[data-db-import-field]');
         if (!input || !state.databaseView) {
           return;
@@ -6035,6 +6230,26 @@
       });
 
       dom.canvasWorkspace.addEventListener('change', (event) => {
+        const configInput = event.target.closest('[data-db-config-field]');
+        if (configInput && state.databaseView) {
+          state.databaseView.configDraft[configInput.dataset.dbConfigField] =
+            configInput.dataset.dbConfigField === 'backupPolicy'
+              ? normalizeBackupPolicy(configInput.value)
+              : configInput.value;
+          if (configInput.dataset.dbConfigField === 'backupPolicy') {
+            const defaults = backupScheduleDefaults(state.databaseView.configDraft.backupPolicy);
+            state.databaseView.configDraft.backupHour = state.databaseView.configDraft.backupHour || defaults.backupHour;
+            state.databaseView.configDraft.backupMinute =
+              state.databaseView.configDraft.backupMinute || defaults.backupMinute;
+            state.databaseView.configDraft.backupWeekday =
+              state.databaseView.configDraft.backupWeekday || defaults.backupWeekday;
+          }
+          state.databaseView.saveState = 'editing';
+          state.databaseView.error = '';
+          renderCanvasWorkspace();
+          return;
+        }
+
         const input = event.target.closest('[data-db-import-upload]');
         if (!input || !state.databaseView) {
           return;
@@ -6742,7 +6957,7 @@
       y,
       details: {
         connect: databaseConnectString(flavor),
-        backup: '快照 + 恢复点',
+        backup: '按小时',
         observability: `${instanceSpec} / ${replicas} 副本 / 监控开启`,
       },
       operations: ['复制连接串', '创建只读副本', '打开备份'],
@@ -7826,6 +8041,9 @@
     if (!action) {
       return;
     }
+
+    state.hoveredToolAction = '';
+    clearToolHoverMessage();
 
     if (action === 'projects') {
       closeDatabaseWorkspace();
