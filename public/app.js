@@ -13,6 +13,12 @@
       action: 'github-ui',
     },
     {
+      id: 'skills',
+      label: 'Skills',
+      icon: 'skills',
+      action: 'skills-ui',
+    },
+    {
       id: 'docker',
       label: 'Docker 镜像',
       icon: 'docker',
@@ -42,6 +48,8 @@
   const CHAT_TOOL_FILTERS = FILTERS.filter((filter) => filter.id !== 'projects');
   const CHAT_TOOL_HINTS = {
     'github-ui': '从 GitHub 源码部署任意项目到 Sealos 上。',
+    'skills-ui':
+      '可以本地安装 Sealos 的 Skills。\nSealos 的 Skills 可以帮助用户自动分析源代码、自动编写 Dockerfile、自动构建 Docker 镜像、自动推送到 GitHub、自动部署到 Sealos。\n安装命令：`npx skills add labring/seakills`',
     'docker-ui': '部署任意 Docker 镜像到 Sealos 上。',
     'database-ui': '在 Sealos 上运行 MySQL、PostgreSQL、MongoDB 和 Redis 数据库。',
     'app-ui': '部署任意已封装好的应用到 Sealos 上。',
@@ -1039,6 +1047,7 @@
       ...(node.containerConfig || {}),
     };
 
+    node.status = normalizeWorkloadStatus(node.status);
     Object.assign(nextConfig, normalizeContainerConfigShape(nextConfig));
 
     nextConfig.stateful =
@@ -1181,6 +1190,7 @@
       ...(node.devboxConfig || {}),
     };
 
+    node.status = normalizeWorkloadStatus(node.status);
     if (!nextConfig.quotaCpu) {
       nextConfig.quotaCpu = nextConfig.cpu;
     }
@@ -1343,6 +1353,24 @@
     }
 
     return slugifyText(title.replace(/\b(cluster|data|postgresql|ha)\b/gi, '')) || 'workspace';
+  }
+
+  function defaultDatabaseInstanceName(flavor) {
+    const normalized = String(flavor || '').trim().toLowerCase();
+
+    if (normalized === 'mysql') {
+      return 'mysql-main';
+    }
+
+    if (normalized === 'redis') {
+      return 'redis-cache';
+    }
+
+    if (normalized === 'mongodb') {
+      return 'mongo-main';
+    }
+
+    return 'pgsql-main';
   }
 
   function normalizeBackupPolicy(value) {
@@ -1698,6 +1726,7 @@
       ...(node.databaseConfig || {}),
     };
 
+    node.status = normalizeWorkloadStatus(node.status);
     node.databaseConfig = nextConfig;
     node.details = {
       ...(node.details || {}),
@@ -3385,7 +3414,7 @@
           type: 'container',
           title: 'orders-api',
           subtitle: '',
-          status: 'Running',
+          status: 'running',
           tags: [],
           x: 370,
           y: 230,
@@ -3413,9 +3442,9 @@
         {
           id: 'db-demo',
           type: 'database',
-          title: 'PostgreSQL',
+          title: 'orders-db',
           subtitle: '',
-          status: 'Protected',
+          status: 'running',
           tags: [],
           x: 700,
           y: 355,
@@ -3445,7 +3474,7 @@
           type: 'devbox',
           title: 'Alice',
           subtitle: '',
-          status: 'Ready',
+          status: 'running',
           tags: [],
           x: 712,
           y: 92,
@@ -3464,6 +3493,118 @@
             port: '3000/TCP',
           },
           operations: ['复制连接地址', '重启环境', '挂载仓库'],
+        },
+        {
+          id: 'container-starting-demo',
+          type: 'container',
+          title: 'billing-api',
+          subtitle: '',
+          status: 'starting',
+          tags: [],
+          x: 364,
+          y: 470,
+          details: {
+            image: 'ghcr.io/sealai/billing-api:2026.04.12',
+            envVars: 'PORT=8080\nLOG_LEVEL=debug',
+          },
+          containerConfig: {
+            image: 'ghcr.io/sealai/billing-api:2026.04.12',
+            replicas: '1',
+            cpu: '1',
+            memory: '2Gi',
+            quotaCpu: '1',
+            quotaMemory: '2Gi',
+            usedCpu: '0.2',
+            usedMemory: '0.6Gi',
+            envVars: 'PORT=8080\nLOG_LEVEL=debug',
+            mountDisk: false,
+            stateful: false,
+          },
+          operations: ['查看日志', '等待就绪', '查看事件'],
+        },
+        {
+          id: 'container-unhealthy-demo',
+          type: 'container',
+          title: 'worker-cron',
+          subtitle: '',
+          status: 'unhealthy',
+          tags: [],
+          x: 694,
+          y: 612,
+          details: {
+            image: 'ghcr.io/sealai/worker-cron:2026.04.12',
+            envVars: 'QUEUE=emails\nCRON=*/5 * * * *',
+          },
+          containerConfig: {
+            image: 'ghcr.io/sealai/worker-cron:2026.04.12',
+            replicas: '1',
+            cpu: '1',
+            memory: '1Gi',
+            quotaCpu: '1',
+            quotaMemory: '1Gi',
+            usedCpu: '0.8',
+            usedMemory: '0.9Gi',
+            envVars: 'QUEUE=emails\nCRON=*/5 * * * *',
+            mountDisk: false,
+            stateful: false,
+          },
+          operations: ['查看告警', '重启实例', '查看日志'],
+        },
+        {
+          id: 'db-stopping-demo',
+          type: 'database',
+          title: 'analytics-db',
+          subtitle: '',
+          status: 'stopping',
+          tags: [],
+          x: 1032,
+          y: 346,
+          details: {
+            connect: 'postgres://analytics:••••@analytics.internal:5432/analytics',
+            backup: '按天',
+            metrics: 'QPS 34 / 复制延迟 12ms',
+          },
+          databaseConfig: {
+            flavor: 'PostgreSQL',
+            version: '16.4',
+            instanceSpec: 'db.pg.medium',
+            cpu: '4',
+            memory: '8Gi',
+            usedCpu: '1.7',
+            usedMemory: '3.2Gi',
+            replicas: '1',
+            storage: '120Gi',
+            usedStorage: '41Gi',
+            backupPolicy: '按天',
+            backupRetention: '14 天',
+            backupTarget: 'OSS / analytics-backup',
+          },
+          operations: ['查看连接串', '调整存储', '查看备份'],
+        },
+        {
+          id: 'devbox-stopped-demo',
+          type: 'devbox',
+          title: 'Mika',
+          subtitle: '',
+          status: 'stopped',
+          tags: [],
+          x: 1036,
+          y: 92,
+          details: {
+            access: 'code-server.sealos.run/devbox/mika',
+            templateId: 'nodejs',
+            templateName: 'Node.js',
+            version: '20',
+            cpu: '2',
+            memory: '4Gi',
+            usedCpu: '0.1',
+            usedMemory: '0.4Gi',
+            diskSize: '40Gi',
+            diskUsed: '9Gi',
+            startCommand: 'pnpm dev --host 0.0.0.0 --port 3000',
+            port: '3000/TCP',
+          },
+          operations: ['启动环境', '查看模板', '挂载仓库'],
         },
       ],
       edges: [
@@ -3626,13 +3767,13 @@
     }
 
     if (
-      (sourceNode.type === 'container' && targetNode.type === 'database') ||
-      (sourceNode.type === 'database' && targetNode.type === 'container')
+      ((sourceNode.type === 'container' || sourceNode.type === 'devbox') && targetNode.type === 'database') ||
+      (sourceNode.type === 'database' && (targetNode.type === 'container' || targetNode.type === 'devbox'))
     ) {
-      const containerNode = sourceNode.type === 'container' ? sourceNode : targetNode;
+      const workloadNode = sourceNode.type === 'database' ? targetNode : sourceNode;
       const databaseNode = sourceNode.type === 'database' ? sourceNode : targetNode;
       return {
-        fromNode: containerNode,
+        fromNode: workloadNode,
         toNode: databaseNode,
       };
     }
@@ -3651,7 +3792,7 @@
 
     const { fromNode, toNode } = normalized;
 
-    if (fromNode.type === 'container' && toNode.type === 'database') {
+    if ((fromNode.type === 'container' || fromNode.type === 'devbox') && toNode.type === 'database') {
       return databaseConnectionLabel((toNode.databaseConfig && toNode.databaseConfig.flavor) || databaseFlavorFromNode(toNode));
     }
 
@@ -3666,12 +3807,21 @@
     return 'Link';
   }
 
-  function removeDatabaseEnvFromContainer(containerNode, databaseNode) {
-    if (!containerNode || !databaseNode || containerNode.type !== 'container' || databaseNode.type !== 'database') {
+  function removeDatabaseEnvFromWorkload(workloadNode, databaseNode) {
+    if (
+      !workloadNode ||
+      !databaseNode ||
+      !['container', 'devbox'].includes(workloadNode.type) ||
+      databaseNode.type !== 'database'
+    ) {
       return;
     }
 
-    syncContainerNode(containerNode);
+    if (workloadNode.type === 'container') {
+      syncContainerNode(workloadNode);
+    } else {
+      syncDevboxNode(workloadNode);
+    }
     syncDatabaseNode(databaseNode);
 
     const envKey = databaseConnectionLabel(
@@ -3684,7 +3834,7 @@
     const replacementPair = state.edges
       .map((edge) => normalizeConnectionPair(getNodeById(edge.from), getNodeById(edge.to)))
       .find((pair) => {
-        if (!pair || pair.fromNode.id !== containerNode.id || pair.toNode.type !== 'database') {
+        if (!pair || pair.fromNode.id !== workloadNode.id || pair.toNode.type !== 'database') {
           return false;
         }
 
@@ -3694,42 +3844,64 @@
         return pairKey === envKey;
       });
     const replacementValue = replacementPair ? String((replacementPair.toNode.details && replacementPair.toNode.details.connect) || '').trim() : '';
+    const configKey = workloadNode.type === 'container' ? 'containerConfig' : 'devboxConfig';
+    const viewKey = workloadNode.type === 'container' ? 'containerView' : 'devboxView';
+    const currentConfig = workloadNode[configKey] || {};
+    const currentEnvVars = String(currentConfig.envVars || '').trim();
     const nextEnvVars = replacementValue
-      ? upsertEnvVarText((containerNode.containerConfig && containerNode.containerConfig.envVars) || '', envKey, replacementValue)
-      : removeEnvVarText((containerNode.containerConfig && containerNode.containerConfig.envVars) || '', envKey);
+      ? upsertEnvVarText(currentEnvVars, envKey, replacementValue)
+      : removeEnvVarText(currentEnvVars, envKey);
 
-    containerNode.containerConfig = {
-      ...containerNode.containerConfig,
+    workloadNode[configKey] = {
+      ...currentConfig,
       envVars: nextEnvVars,
     };
-    syncContainerNode(containerNode);
 
-    if (state.containerView && state.containerView.nodeId === containerNode.id) {
+    if (workloadNode.type === 'container') {
+      syncContainerNode(workloadNode);
+    } else {
+      workloadNode.details = {
+        ...(workloadNode.details || {}),
+        envVars: nextEnvVars,
+      };
+      syncDevboxNode(workloadNode);
+    }
+
+    if (state[viewKey] && state[viewKey].nodeId === workloadNode.id) {
       const viewEnvVars = replacementValue
         ? upsertEnvVarText(
-            (state.containerView.configDraft && state.containerView.configDraft.envVars) || containerNode.containerConfig.envVars || '',
+            (state[viewKey].configDraft && state[viewKey].configDraft.envVars) || nextEnvVars,
             envKey,
             replacementValue,
           )
         : removeEnvVarText(
-            (state.containerView.configDraft && state.containerView.configDraft.envVars) || containerNode.containerConfig.envVars || '',
+            (state[viewKey].configDraft && state[viewKey].configDraft.envVars) || nextEnvVars,
             envKey,
           );
-      state.containerView.configDraft = {
-        ...(state.containerView.configDraft || {}),
+      state[viewKey].configDraft = {
+        ...(state[viewKey].configDraft || {}),
         envVars: viewEnvVars,
       };
-      state.containerView.info = replacementValue ? `${envKey} 已切换` : `${envKey} 已移除`;
-      state.containerView.error = '';
+      state[viewKey].info = replacementValue ? `${envKey} 已切换` : `${envKey} 已移除`;
+      state[viewKey].error = '';
     }
   }
 
-  function injectDatabaseEnvIntoContainer(containerNode, databaseNode) {
-    if (!containerNode || !databaseNode || containerNode.type !== 'container' || databaseNode.type !== 'database') {
+  function injectDatabaseEnvIntoWorkload(workloadNode, databaseNode) {
+    if (
+      !workloadNode ||
+      !databaseNode ||
+      !['container', 'devbox'].includes(workloadNode.type) ||
+      databaseNode.type !== 'database'
+    ) {
       return null;
     }
 
-    syncContainerNode(containerNode);
+    if (workloadNode.type === 'container') {
+      syncContainerNode(workloadNode);
+    } else {
+      syncDevboxNode(workloadNode);
+    }
     syncDatabaseNode(databaseNode);
 
     const envKey = databaseConnectionLabel(
@@ -3740,32 +3912,46 @@
       return null;
     }
 
-    containerNode.containerConfig = {
-      ...containerNode.containerConfig,
-      envVars: upsertEnvVarText((containerNode.containerConfig && containerNode.containerConfig.envVars) || '', envKey, envValue),
-    };
-    syncContainerNode(containerNode);
+    const configKey = workloadNode.type === 'container' ? 'containerConfig' : 'devboxConfig';
+    const viewKey = workloadNode.type === 'container' ? 'containerView' : 'devboxView';
+    const currentConfig = workloadNode[configKey] || {};
+    const nextEnvVars = upsertEnvVarText(String(currentConfig.envVars || '').trim(), envKey, envValue);
 
-    if (state.containerView && state.containerView.nodeId === containerNode.id) {
-      state.containerView.configDraft = {
-        ...(state.containerView.configDraft || {}),
+    workloadNode[configKey] = {
+      ...currentConfig,
+      envVars: nextEnvVars,
+    };
+
+    if (workloadNode.type === 'container') {
+      syncContainerNode(workloadNode);
+    } else {
+      workloadNode.details = {
+        ...(workloadNode.details || {}),
+        envVars: nextEnvVars,
+      };
+      syncDevboxNode(workloadNode);
+    }
+
+    if (state[viewKey] && state[viewKey].nodeId === workloadNode.id) {
+      state[viewKey].configDraft = {
+        ...(state[viewKey].configDraft || {}),
         envVars: upsertEnvVarText(
-          (state.containerView.configDraft && state.containerView.configDraft.envVars) || containerNode.containerConfig.envVars || '',
+          (state[viewKey].configDraft && state[viewKey].configDraft.envVars) || nextEnvVars,
           envKey,
           envValue,
         ),
       };
-      state.containerView.info = `${envKey} 已注入`;
-      state.containerView.error = '';
+      state[viewKey].info = `${envKey} 已注入`;
+      state[viewKey].error = '';
     }
 
     return {
-      sourceNodeId: containerNode.id,
+      sourceNodeId: workloadNode.id,
       targetNodeId: databaseNode.id,
       envKey,
       envValue,
-      keyLabel: 'databaseUrl',
-      valueLabel: 'databaseValue',
+      keyLabel: '环境变量名',
+      valueLabel: '环境变量值',
     };
   }
 
@@ -3796,7 +3982,7 @@
     }
 
     const normalized = normalizeConnectionPair(sourceNode, targetNode);
-    const injectionPayload = normalized ? injectDatabaseEnvIntoContainer(normalized.fromNode, normalized.toNode) : null;
+    const injectionPayload = normalized ? injectDatabaseEnvIntoWorkload(normalized.fromNode, normalized.toNode) : null;
     if (injectionPayload) {
       addAguiMessage('env-injection', injectionPayload);
     } else {
@@ -3820,8 +4006,12 @@
     state.selectedEdgeId = null;
 
     const normalized = normalizeConnectionPair(getNodeById(edge.from), getNodeById(edge.to));
-    if (normalized && normalized.fromNode.type === 'container' && normalized.toNode.type === 'database') {
-      removeDatabaseEnvFromContainer(normalized.fromNode, normalized.toNode);
+    if (
+      normalized &&
+      ['container', 'devbox'].includes(normalized.fromNode.type) &&
+      normalized.toNode.type === 'database'
+    ) {
+      removeDatabaseEnvFromWorkload(normalized.fromNode, normalized.toNode);
     }
   }
 
@@ -4027,6 +4217,7 @@
         ${filter.prompt ? `data-shortcut-prompt="${filter.prompt}"` : ''}
         ${filter.icon === 'docker' ? 'data-accent="docker"' : ''}
         ${filter.icon === 'github' ? 'data-accent="github"' : ''}
+        ${filter.icon === 'skills' ? 'data-accent="skills"' : ''}
         ${filter.icon === 'vscode' ? 'data-accent="vscode"' : ''}
         title="${filter.label}"
         aria-label="${filter.label}"
@@ -4042,6 +4233,7 @@
     const dragThreshold = 8;
 
     visibleNodes.forEach((node) => {
+      const isExpanded = Boolean(node.expanded);
       const summary = nodeSummary(node);
       const tags = node.type === 'devbox' ? [] : Array.isArray(node.tags) ? node.tags.filter(Boolean) : [];
       const entryConfig = node.type === 'entry' ? syncEntryNode(node).entryConfig : null;
@@ -4050,10 +4242,16 @@
       const devboxConfig = node.type === 'devbox' ? syncDevboxNode(node).devboxConfig : null;
       const displayTitle = cardTitleForNode(node);
       const entryStatus = compactStatusLabel(node.status || (entryConfig && entryConfig.externalStatus) || '');
+      const rawStatus = node.type === 'entry' ? node.status || (entryConfig && entryConfig.externalStatus) || '' : node.status || '';
+      const statusTone = nodeStatusTone(rawStatus);
+      const nodeIconMarkup = `<span class="node-icon">${iconMarkup(iconForType(node.type))}</span>`;
       const headerStatusMarkup = (value) =>
-        value ? `<span class="node-status-chip">${escapeHtml(value)}</span>` : '';
+        value ? `<span class="node-status-chip ${nodeStatusTone(value)}">${escapeHtml(value)}</span>` : '';
       const databaseTitle = node.type === 'database' ? databaseDisplayTitle(node, databaseConfig) : '';
+      const databaseMeta = node.type === 'database' ? databaseDisplayMeta(node, databaseConfig) : '';
+      const thumbnailTitle = databaseTitle || displayTitle || node.title || labelForType(node.type);
       const devboxStacks = node.type === 'devbox' ? devboxStackLabels(node, devboxConfig) : [];
+      const devboxMeta = devboxStacks[0] || '';
       const entryDomains =
         node.type === 'entry'
           ? `
@@ -4086,7 +4284,7 @@
           ? `
               <div class="node-head-row node-head-row-single">
                 <div class="node-head-main">
-                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  ${nodeIconMarkup}
                   <div class="node-head-label">入口域名</div>
                 </div>
                 <div class="node-head-actions">
@@ -4101,7 +4299,7 @@
           ? `
               <div class="node-head-row">
                 <div class="node-head-main">
-                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  ${nodeIconMarkup}
                   <div class="node-head-label">容器实例</div>
                 </div>
                 <div class="node-head-actions">
@@ -4116,8 +4314,11 @@
           ? `
               <div class="node-head-row">
                 <div class="node-head-main">
-                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
-                  <div class="node-head-label">开发环境</div>
+                  ${nodeIconMarkup}
+                  <div class="node-head-label-row">
+                    <div class="node-head-label">开发环境</div>
+                    ${devboxMeta ? `<div class="node-head-inline-meta">${escapeHtml(devboxMeta)}</div>` : ''}
+                  </div>
                 </div>
                 <div class="node-head-actions">
                   ${headerStatusMarkup(compactStatusLabel(node.status))}
@@ -4125,15 +4326,17 @@
               </div>
               <div class="node-subhead-row">
                 <h3 class="node-head-name">${escapeHtml(displayTitle || 'Workspace')}</h3>
-                ${devboxStacks.length ? `<div class="node-stack-inline">${escapeHtml(devboxStacks.join('、'))}</div>` : ''}
               </div>
             `
           : node.type === 'database'
           ? `
               <div class="node-head-row">
                 <div class="node-head-main">
-                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
-                  <div class="node-head-label">数据库</div>
+                  ${nodeIconMarkup}
+                  <div class="node-head-label-row">
+                    <div class="node-head-label">数据库</div>
+                    ${databaseMeta ? `<div class="node-head-inline-meta">${escapeHtml(databaseMeta)}</div>` : ''}
+                  </div>
                 </div>
                 <div class="node-head-actions">
                   ${headerStatusMarkup(compactStatusLabel(node.status))}
@@ -4146,7 +4349,7 @@
           : `
               <div class="node-top">
                 <div class="node-heading">
-                  <div class="node-icon material-symbols-outlined">${iconForType(node.type)}</div>
+                  ${nodeIconMarkup}
                   <div class="node-heading-copy">
                     <span class="node-type">${labelForType(node.type)}</span>
                     <h3 class="node-title">${escapeHtml(displayTitle)}</h3>
@@ -4208,9 +4411,26 @@
             `
           : '';
       const devboxCard = node.type === 'devbox' ? renderNodeDevboxCard(node, devboxConfig) : '';
+      const nodeControlsMarkup = `
+        <span class="node-control-stack">
+          <span class="node-control-button" data-node-toggle="true" data-node-control="true">
+            <span class="material-symbols-outlined node-control-icon">${isExpanded ? 'close_fullscreen' : 'open_in_full'}</span>
+            ${isExpanded ? '收起' : '展开'}
+          </span>
+        </span>
+      `;
+      const thumbnailCard = `
+        <div class="node-thumbnail">
+          <div class="node-thumbnail-main">
+            <span class="node-thumbnail-icon">${iconMarkup(iconForType(node.type))}</span>
+            <span class="node-thumbnail-title">${escapeHtml(thumbnailTitle)}</span>
+          </div>
+          <span class="node-thumbnail-status ${statusTone}" title="${escapeHtml(rawStatus || 'unknown')}"></span>
+        </div>
+      `;
       const card = document.createElement('button');
       card.type = 'button';
-      card.className = `node-card ${node.id === state.selectedNodeId ? 'active' : ''}`;
+      card.className = `node-card ${node.id === state.selectedNodeId ? 'active' : ''} ${isExpanded ? 'is-expanded' : 'is-collapsed'}`;
       card.dataset.nodeId = node.id;
       card.dataset.type = node.type;
       card.style.left = `${node.x}px`;
@@ -4228,48 +4448,24 @@
             `,
           )
           .join('')}
-        ${topSectionMarkup}
-        ${node.subtitle && !['devbox', 'entry'].includes(node.type) ? `<p class="node-subtitle">${escapeHtml(node.subtitle)}</p>` : ''}
-        ${entryDomains}
-        ${containerCard}
-        ${databaseCard}
-        ${devboxCard}
-        ${node.type !== 'container' && node.type !== 'devbox' && tags.length ? `<div class="node-footer">${tags.map((tag) => `<span class="node-tag">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
-        ${summary ? `<div class="node-summary">${escapeHtml(summary)}</div>` : ''}
+        ${nodeControlsMarkup}
+        ${
+          isExpanded
+            ? `
+                ${topSectionMarkup}
+                ${node.subtitle && !['devbox', 'entry'].includes(node.type) ? `<p class="node-subtitle">${escapeHtml(node.subtitle)}</p>` : ''}
+                ${entryDomains}
+                ${containerCard}
+                ${databaseCard}
+                ${devboxCard}
+                ${node.type !== 'container' && node.type !== 'devbox' && tags.length ? `<div class="node-footer">${tags.map((tag) => `<span class="node-tag">${escapeHtml(tag)}</span>`).join('')}</div>` : ''}
+                ${summary ? `<div class="node-summary">${escapeHtml(summary)}</div>` : ''}
+              `
+            : thumbnailCard
+        }
       `;
 
-      card.addEventListener('click', async (event) => {
-        if (event.target.closest('[data-node-link-handle]')) {
-          return;
-        }
-
-        if (state.suppressClickNodeId === node.id) {
-          state.suppressClickNodeId = null;
-          return;
-        }
-
-        const copyTarget = event.target.closest('[data-node-copy]');
-        if (copyTarget) {
-          await copyToClipboard(copyTarget.dataset.nodeCopy || '');
-          return;
-        }
-
-        const domainTarget = event.target.closest('[data-node-domain]');
-        if (domainTarget && node.type === 'entry') {
-          state.selectedNodeId = node.id;
-          state.hoveredEdgeId = null;
-          state.selectedEdgeId = null;
-          closeProjectListView();
-          closeDatabaseWorkspace();
-          closeContainerContext();
-          closeDevboxContext();
-          openEntryContext(node.id);
-          pushNodeConfigMessage(node);
-          openDomainTarget(domainTarget.dataset.nodeDomain || '');
-          renderAll();
-          return;
-        }
-
+      const activateNode = () => {
         state.selectedNodeId = node.id;
         state.hoveredEdgeId = null;
         state.selectedEdgeId = null;
@@ -4303,6 +4499,49 @@
         }
         pushNodeConfigMessage(node);
         renderAll();
+      };
+
+      card.addEventListener('click', async (event) => {
+        if (event.target.closest('[data-node-link-handle]')) {
+          return;
+        }
+
+        if (event.target.closest('[data-node-toggle]')) {
+          event.preventDefault();
+          event.stopPropagation();
+          node.expanded = !Boolean(node.expanded);
+          renderAll();
+          return;
+        }
+
+        if (state.suppressClickNodeId === node.id) {
+          state.suppressClickNodeId = null;
+          return;
+        }
+
+        const copyTarget = event.target.closest('[data-node-copy]');
+        if (copyTarget) {
+          await copyToClipboard(copyTarget.dataset.nodeCopy || '');
+          return;
+        }
+
+        const domainTarget = event.target.closest('[data-node-domain]');
+        if (domainTarget && node.type === 'entry') {
+          state.selectedNodeId = node.id;
+          state.hoveredEdgeId = null;
+          state.selectedEdgeId = null;
+          closeProjectListView();
+          closeDatabaseWorkspace();
+          closeContainerContext();
+          closeDevboxContext();
+          openEntryContext(node.id);
+          pushNodeConfigMessage(node);
+          openDomainTarget(domainTarget.dataset.nodeDomain || '');
+          renderAll();
+          return;
+        }
+
+        activateNode();
       });
 
       card.addEventListener('pointerdown', (event) => {
@@ -4323,7 +4562,12 @@
           return;
         }
 
-        if (event.target.closest('[data-node-domain]') || event.target.closest('[data-node-copy]')) {
+        if (
+          event.target.closest('[data-node-domain]') ||
+          event.target.closest('[data-node-copy]') ||
+          event.target.closest('[data-node-toggle]') ||
+          event.target.closest('[data-node-control]')
+        ) {
           return;
         }
 
@@ -4433,7 +4677,7 @@
                   data-project-node-id="${node.id}"
                 >
                   <div class="project-overview-head">
-                    <span class="project-overview-icon material-symbols-outlined">${iconForType(node.type)}</span>
+                    <span class="project-overview-icon">${iconMarkup(iconForType(node.type))}</span>
                     <span class="project-overview-status">${escapeHtml(node.status)}</span>
                   </div>
                   <strong class="project-overview-title">${escapeHtml(cardTitleForNode(node) || node.title)}</strong>
@@ -6802,7 +7046,7 @@
       type: 'container',
       title: project,
       subtitle: '',
-      status: 'Running',
+      status: 'running',
       tags: [],
       x: baseX + 260,
       y: baseY + 40,
@@ -6884,7 +7128,7 @@
       type: 'container',
       title: name,
       subtitle: '',
-      status: 'Running',
+      status: 'running',
       tags: [],
       x: x + 260,
       y,
@@ -6949,9 +7193,9 @@
     const databaseNode = syncDatabaseNode({
       id,
       type: 'database',
-      title: `${flavor}`,
+      title: options.name || defaultDatabaseInstanceName(flavor),
       subtitle: '',
-      status: 'Protected',
+      status: 'running',
       tags: [],
       x,
       y,
@@ -6999,7 +7243,7 @@
       type: 'database',
       title: `${appName} DB`,
       subtitle: '',
-      status: 'Protected',
+      status: 'running',
       tags: [],
       x: baseX + 545,
       y: baseY + 136,
@@ -7037,7 +7281,7 @@
         type: 'app',
         title: `${appName} Frontend`,
         subtitle: appTemplate.frontendSubtitle,
-        status: 'Running',
+        status: 'running',
         tags: appTemplate.frontendTags,
         x: baseX + 250,
         y: baseY - 16,
@@ -7053,7 +7297,7 @@
         type: 'container',
         title: `${appName} Backend`,
         subtitle: '',
-        status: 'Running',
+        status: 'running',
         tags: [],
         x: baseX + 250,
         y: baseY + 168,
@@ -7142,7 +7386,7 @@
         type: 'devbox',
         title: owner,
         subtitle: '',
-        status: 'Ready',
+        status: 'running',
         tags: [],
         x,
         y,
@@ -7203,7 +7447,7 @@
     const entry = [...state.nodes].reverse().find((node) => node.type === 'entry');
 
     if (container) {
-      container.status = 'Recovered';
+      container.status = 'running';
       container.tags = uniqueTags(container.tags.concat(['配置已修复']));
       container.details.env = '关键环境变量已补齐';
       state.selectedNodeId = container.id;
@@ -7273,10 +7517,10 @@
   function iconForType(type) {
     return {
       entry: 'router',
-      container: 'inventory_2',
-      database: 'storage',
+      container: 'docker',
+      database: 'database',
       app: 'widgets',
-      devbox: 'code',
+      devbox: 'vscode',
     }[type];
   }
 
@@ -7293,10 +7537,11 @@
   function metricForNode(node) {
     return {
       Accessible: 92,
-      Running: 78,
-      Protected: 88,
-      Ready: 85,
-      Recovered: 81,
+      running: 78,
+      starting: 58,
+      stopping: 44,
+      stopped: 22,
+      unhealthy: 14,
     }[node.status] || 64;
   }
 
@@ -7520,6 +7765,27 @@
     return Number.isFinite(replicas) && replicas > 1 ? '高可用' : '单副本';
   }
 
+  function normalizeWorkloadStatus(status, fallback = 'running') {
+    const normalized = String(status || '').trim().toLowerCase();
+    if (!normalized) {
+      return fallback;
+    }
+
+    if (['starting', 'running', 'stopping', 'stopped', 'unhealthy'].includes(normalized)) {
+      return normalized;
+    }
+
+    if (['ready', 'protected', 'recovered', 'healthy'].includes(normalized)) {
+      return 'running';
+    }
+
+    if (/(error|failed|issue|crash|down)/.test(normalized)) {
+      return 'unhealthy';
+    }
+
+    return fallback;
+  }
+
   function compactStatusLabel(status) {
     const normalized = String(status || '').trim().toLowerCase();
     if (!normalized) {
@@ -7529,15 +7795,42 @@
     return {
       accessible: 'accessible',
       running: 'running',
-      ready: 'ready',
-      protected: 'protected',
+      starting: 'starting',
+      stopping: 'stopping',
+      stopped: 'stopped',
+      unhealthy: 'unhealthy',
+      ready: 'running',
+      protected: 'running',
+      recovered: 'running',
     }[normalized] || normalized;
+  }
+
+  function nodeStatusTone(status) {
+    const normalized = compactStatusLabel(status);
+    if (!normalized) {
+      return 'other';
+    }
+
+    if (/(error|failed|issue|crash|down|stopped|unhealthy)/.test(normalized)) {
+      return 'error';
+    }
+
+    if (normalized === 'running' || normalized === 'accessible') {
+      return 'running';
+    }
+
+    return 'other';
   }
 
   function databaseDisplayTitle(node, config) {
     const baseTitle = String(cardTitleForNode(node) || (node && node.title) || '').trim() || 'Database';
+    return baseTitle;
+  }
+
+  function databaseDisplayMeta(node, config) {
+    const flavor = String((config && config.flavor) || databaseFlavorFromNode(node) || '').trim();
     const version = String((config && config.version) || '').trim();
-    return version ? `${baseTitle} ${version}` : baseTitle;
+    return [flavor, version].filter(Boolean).join(' ');
   }
 
   function devboxStackLabels(node, config) {
@@ -8061,6 +8354,12 @@
       return;
     }
 
+    if (action === 'skills-ui') {
+      closeProjectListView();
+      openSkillsGuideUi();
+      return;
+    }
+
     if (action === 'docker-ui') {
       closeProjectListView();
       openDockerDeployUi();
@@ -8171,6 +8470,51 @@
       lastMode: '',
     });
     focusAguiField(message.id, 'projectName');
+  }
+
+  function openSkillsGuideUi(options = {}) {
+    const existing = options.alwaysNew
+      ? null
+      : state.messages.find((message) => message.kind === 'agui' && message.ui === 'skills-guide');
+
+    if (existing) {
+      renderChat();
+      return;
+    }
+
+    addAguiMessage('skills-guide', {
+      command: 'npx skills add labring/seakills',
+      steps: [
+        {
+          title: '本地安装 Skills 和 Docker',
+          detail: '执行安装命令，准备 Sealos Skills 运行环境。',
+        },
+        {
+          title: '执行 “Deploy on Sealos” Skills 指令',
+          detail: '在当前工程里直接触发自动部署流程。',
+        },
+        {
+          title: '完成设备认证',
+          detail: '按提示完成本机与 Sealos 账号的认证绑定。',
+        },
+        {
+          title: '自动分析工程并生成 Dockerfile',
+          detail: '自动识别技术栈、入口命令和依赖，生成可构建的 Dockerfile。',
+        },
+        {
+          title: '自动构建 Docker 镜像',
+          detail: '根据生成结果完成镜像构建，准备发布。',
+        },
+        {
+          title: '自动生成 Sealos YAML 配置',
+          detail: '产出部署所需的 Sealos 应用配置与运行参数。',
+        },
+        {
+          title: '自动上线并生成可访问域名',
+          detail: '完成部署后返回域名，直接可以访问。',
+        },
+      ],
+    });
   }
 
   function openDockerDeployUi(options = {}) {
@@ -8987,15 +9331,15 @@
               <strong>环境变量注入</strong>
               <span>${escapeHtml(sourceTitle)} -> ${escapeHtml(targetTitle)}</span>
             </div>
-            <div class="db-chip">Injected</div>
+            <div class="db-chip">已注入</div>
           </div>
           <div class="link-injection-list">
             <div class="link-injection-row">
-              <span>${escapeHtml(payload.keyLabel || 'databaseUrl')}</span>
+              <span>${escapeHtml(payload.keyLabel || '环境变量名')}</span>
               <strong>${escapeHtml(payload.envKey || 'DATABASE_URL')}</strong>
             </div>
             <div class="link-injection-row">
-              <span>${escapeHtml(payload.valueLabel || 'databaseValue')}</span>
+              <span>${escapeHtml(payload.valueLabel || '环境变量值')}</span>
               <code>${escapeHtml(payload.envValue || '')}</code>
             </div>
           </div>
@@ -9025,6 +9369,10 @@
       return renderEnvInjectionMessage(message);
     }
 
+    if (message.ui === 'skills-guide') {
+      return renderSkillsGuideCard(message);
+    }
+
     if (message.ui === 'project-create') {
       return renderProjectCreateCard(message);
     }
@@ -9050,6 +9398,59 @@
     }
 
     return '';
+  }
+
+  function renderSkillsGuideCard(message) {
+    const payload = message.payload || {};
+    const command = String(payload.command || 'npx skills add labring/seakills').trim();
+    const steps = Array.isArray(payload.steps) ? payload.steps : [];
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card skills-guide-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>Sealos Skills 使用流程</strong>
+              <span>从本地安装到自动上线，一共 7 个步骤。</span>
+            </div>
+            <div class="agui-card-pill">7 Steps</div>
+          </div>
+
+          <div class="agui-methods">
+            <section class="agui-method">
+              <div class="agui-method-title">Install</div>
+              <div class="agui-method-copy">先在本地安装 Sealos 的 Skills。</div>
+              <code class="skills-command">${escapeHtml(command)}</code>
+            </section>
+
+            <section class="agui-method">
+              <div class="agui-method-title">Flow</div>
+              <div class="agui-method-copy">整个部署过程会按下面的顺序自动完成。</div>
+              <div class="skills-flow">
+                ${steps
+                  .map(
+                    (step, index) => `
+                      <div class="skills-step">
+                        <div class="skills-step-index">${index + 1}</div>
+                        <div class="skills-step-copy">
+                          <strong>${escapeHtml(step.title || '')}</strong>
+                          <span>${escapeHtml(step.detail || '')}</span>
+                        </div>
+                      </div>
+                    `,
+                  )
+                  .join('')}
+              </div>
+            </section>
+          </div>
+
+          <div class="agui-card-footer">
+            <div class="agui-status">安装完成后，直接执行 “Deploy on Sealos” 即可进入自动分析、构建与部署流程。</div>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function renderProjectCreateCard(message) {
@@ -9933,10 +10334,26 @@
       `;
     }
 
+    if (icon === 'skills') {
+      return `
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <path d="M12 2.8 20 7.4v9.2L12 21.2 4 16.6V7.4Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M12 7.2 8.7 9.1v3.8l3.3 1.9 3.3-1.9V9.1Z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M12 7.2v7.6" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M8.7 9.1 12 11l3.3-1.9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+        </svg>
+      `;
+    }
+
     if (icon === 'vscode') {
       return `
         <svg viewBox="0 0 24 24" aria-hidden="true">
-          <path d="M16.95 2.25 8.11 10.7 4.34 7.84 2.25 9.88l3.97 3.12-3.97 3.12 2.09 2.03 3.77-2.86 8.84 8.46 4.8-1.93V4.18l-4.8-1.93Zm-.45 4.37v10.76L10.68 13l5.82-6.38Z"/>
+          <path d="M3.5 5.5h17v13h-17z" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="M3.5 8.5h17" fill="none" stroke="currentColor" stroke-width="1.5"/>
+          <path d="m9.4 11.8-2.2 2.2 2.2 2.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"/>
+          <path d="m14.6 11.8 2.2 2.2-2.2 2.2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square" stroke-linejoin="miter"/>
+          <path d="M6.1 6.95h1.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
+          <path d="M8.4 6.95h1.1" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="square"/>
         </svg>
       `;
     }
