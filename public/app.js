@@ -325,6 +325,9 @@
     planOverlay: document.getElementById('planOverlay'),
     planCountdown: document.getElementById('planCountdown'),
     planGrid: document.getElementById('planGrid'),
+    windowOverlay: document.getElementById('windowOverlay'),
+    windowBody: document.getElementById('windowBody'),
+    windowTitle: document.getElementById('windowTitle'),
   };
 
   const state = {
@@ -367,6 +370,7 @@
     planOfferEndsAt: Date.now() + PLAN_OFFER_DURATION_MS,
     hoveredToolAction: '',
     hoveredToolMessageId: null,
+    windowModal: null,
   };
 
   let rafHandle = 0;
@@ -986,6 +990,193 @@
     `;
   }
 
+  function parseImageReference(image) {
+    const source = String(image || '').trim();
+    if (!source) {
+      return {
+        repository: '',
+        tag: 'latest',
+      };
+    }
+
+    const match = source.match(/^(.*?)(?::([^/:]+))?$/);
+    return {
+      repository: (match && match[1]) || source,
+      tag: (match && match[2]) || 'latest',
+    };
+  }
+
+  function formatImageDateTag(date) {
+    const year = date.getUTCFullYear();
+    const month = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(date.getUTCDate()).padStart(2, '0');
+    return `${year}.${month}.${day}`;
+  }
+
+  function shiftImageTag(tag, daysDelta) {
+    const normalized = String(tag || 'latest').trim() || 'latest';
+    if (/^\d{4}\.\d{2}\.\d{2}$/.test(normalized)) {
+      const date = new Date(`${normalized.replace(/\./g, '-')}T00:00:00Z`);
+      if (!Number.isNaN(date.getTime())) {
+        date.setUTCDate(date.getUTCDate() + daysDelta);
+        return formatImageDateTag(date);
+      }
+    }
+
+    if (/^\d+\.\d+\.\d+$/.test(normalized)) {
+      const parts = normalized.split('.').map((part) => Number(part));
+      parts[2] = Math.max(0, parts[2] + daysDelta);
+      return parts.join('.');
+    }
+
+    if (normalized === 'latest') {
+      const date = new Date();
+      date.setUTCDate(date.getUTCDate() + daysDelta);
+      return formatImageDateTag(date);
+    }
+
+    return `${normalized}-${Math.abs(daysDelta)}`;
+  }
+
+  function buildDefaultImageHistory(currentImage) {
+    const parsed = parseImageReference(currentImage || DEFAULT_DEPLOY_IMAGE);
+    const baseImage = parsed.repository || DEFAULT_DEPLOY_IMAGE;
+    const currentTag = parsed.tag || 'latest';
+    const ageLabels = ['当前', '2 小时前', '6 小时前', '1 天前', '3 天前', '7 天前'];
+    const offsets = [0, -1, -2, -4, -7, -14];
+
+    return offsets.map((offset, index) => {
+      const tag = index === 0 ? currentTag : shiftImageTag(currentTag, offset);
+      const image = index === 0 && String(currentImage || '').trim() ? String(currentImage).trim() : `${baseImage}:${tag}`;
+      return {
+        id: createId('imgver'),
+        image,
+        tag,
+        createdAt: ageLabels[index] || `${Math.abs(offset)} 天前`,
+        status: index === 0 ? 'current' : 'history',
+        note: index === 0 ? '当前运行版本' : '历史镜像版本',
+      };
+    });
+  }
+
+  function normalizeImageHistory(history, currentImage) {
+    const source = Array.isArray(history) && history.length ? history : buildDefaultImageHistory(currentImage);
+    const entries = source
+      .map((item) => {
+        if (typeof item === 'string') {
+          const parsed = parseImageReference(item);
+          return {
+            id: createId('imgver'),
+            image: item,
+            tag: parsed.tag,
+            createdAt: '',
+            status: 'history',
+            note: '',
+          };
+        }
+
+        const image = String((item && item.image) || '').trim();
+        if (!image) {
+          return null;
+        }
+
+        const parsed = parseImageReference(image);
+        return {
+          id: String(item.id || createId('imgver')),
+          image,
+          tag: String(item.tag || parsed.tag || 'latest').trim(),
+          createdAt: String(item.createdAt || '').trim(),
+          status: String(item.status || 'history').trim(),
+          note: String(item.note || '').trim(),
+        };
+      })
+      .filter(Boolean);
+
+    const deduped = [];
+    const seen = new Set();
+    const current = String(currentImage || '').trim();
+
+    [current, ...entries.map((entry) => entry.image)].forEach((image) => {
+      const normalized = String(image || '').trim();
+      if (!normalized || seen.has(normalized)) {
+        return;
+      }
+      seen.add(normalized);
+      const existing = entries.find((entry) => entry.image === normalized);
+      const parsed = parseImageReference(normalized);
+      deduped.push(
+        existing || {
+          id: createId('imgver'),
+          image: normalized,
+          tag: parsed.tag,
+          createdAt: '',
+          status: 'history',
+          note: '',
+        },
+      );
+    });
+
+    return deduped.map((entry, index) => ({
+      ...entry,
+      status: index === 0 ? 'current' : 'history',
+      createdAt: entry.createdAt || (index === 0 ? '当前' : `${index} 次发布前`),
+      note: entry.note || (index === 0 ? '当前运行版本' : '历史镜像版本'),
+    }));
+  }
+
+  function applyContainerImageHistory(node, nextImage, actionLabel = 'Updated') {
+    if (!node || node.type !== 'container') {
+      return;
+    }
+
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const currentImage = String(container.image || '').trim();
+    const history = normalizeImageHistory(container.imageHistory || node.details.imageHistory, currentImage);
+    const next = String(nextImage || '').trim();
+    if (!next) {
+      return;
+    }
+
+    const remaining = history.filter((entry) => entry.image !== next && entry.image !== currentImage);
+    const nextParsed = parseImageReference(next);
+    const updatedHistory = [
+      {
+        id: createId('imgver'),
+        image: next,
+        tag: nextParsed.tag,
+        createdAt: '刚刚',
+        status: 'current',
+        note: actionLabel,
+      },
+      ...(currentImage && currentImage !== next
+        ? [
+            {
+              id: createId('imgver'),
+              image: currentImage,
+              tag: parseImageReference(currentImage).tag,
+              createdAt: '刚刚',
+              status: 'history',
+              note: 'Previous current',
+            },
+          ]
+        : []),
+      ...remaining,
+    ].slice(0, 12);
+
+    node.containerConfig = {
+      ...node.containerConfig,
+      image: next,
+      imageHistory: normalizeImageHistory(updatedHistory, next),
+    };
+    node.details = {
+      ...(node.details || {}),
+      image: next,
+      imageHistory: normalizeImageHistory(updatedHistory, next),
+    };
+    syncContainerNode(node);
+  }
+
   function createContainerConfig(options = {}) {
     const cpu = String(options.cpu || '1').trim();
     const memory = String(options.memory || '1Gi').trim();
@@ -1009,6 +1200,7 @@
       diskUsed: String(options.diskUsed || (stateful ? estimateUsedDisk(options.diskSize || '20Gi') : '')).trim(),
       mountPath: String(options.mountPath || (stateful ? '/data' : '')).trim(),
       configFiles: normalizeContainerConfigFiles(options.configFiles),
+      imageHistory: normalizeImageHistory(options.imageHistory, String(options.image || DEFAULT_DEPLOY_IMAGE).trim()),
     };
 
     return normalizeContainerConfigShape({
@@ -1043,6 +1235,7 @@
       diskUsed: details.diskUsed,
       mountPath: details.mountPath,
       configFiles: details.configFiles,
+      imageHistory: details.imageHistory,
     }),
       ...(node.containerConfig || {}),
     };
@@ -1074,6 +1267,7 @@
     if (nextConfig.mountDisk && !nextConfig.mountPath) {
       nextConfig.mountPath = '/data';
     }
+    nextConfig.imageHistory = normalizeImageHistory(nextConfig.imageHistory, nextConfig.image);
 
     node.containerConfig = nextConfig;
     node.subtitle = '';
@@ -1098,6 +1292,7 @@
       diskUsed: nextConfig.diskUsed,
       mountPath: nextConfig.mountPath,
       configFiles: normalizeContainerConfigFiles(nextConfig.configFiles),
+      imageHistory: normalizeImageHistory(nextConfig.imageHistory, nextConfig.image),
       runtime: `${nextConfig.cpu} CPU / ${nextConfig.memory}`,
     };
 
@@ -2804,6 +2999,9 @@
       diskUsed: draft.mountDisk ? draft.diskUsed || estimateUsedDisk(draft.diskSize) : '',
       configFiles: normalizeContainerConfigFiles(draft.configFiles),
     };
+    if (String(node.containerConfig.image || '').trim() !== String((node.details && node.details.image) || '').trim()) {
+      applyContainerImageHistory(node, node.containerConfig.image, 'Updated from config');
+    }
     syncContainerNode(node);
     state.containerView.configDraft = { ...node.containerConfig };
     state.containerView.saveState = 'done';
@@ -2814,6 +3012,131 @@
       'assistant',
       `容器配置已更新：${node.title} 调整为 ${containerReplicaLabel(node.containerConfig)}，${node.containerConfig.cpu} CPU / ${node.containerConfig.memory}。`,
     );
+    renderAll();
+  }
+
+  function updateWindowModalDraft(field, value) {
+    if (!state.windowModal || state.windowModal.type !== 'image-manager') {
+      return;
+    }
+
+    state.windowModal[field] = value;
+    state.windowModal.errorText = '';
+    state.windowModal.statusText = '';
+    renderWindowModal();
+  }
+
+  function updateContainerImageFromWindow() {
+    if (!state.windowModal || state.windowModal.type !== 'image-manager') {
+      return;
+    }
+
+    const node = getNodeById(state.windowModal.nodeId);
+    if (!node || node.type !== 'container') {
+      closeWindowModal();
+      return;
+    }
+
+    const nextImage = String(state.windowModal.draftImage || '').trim();
+    if (!nextImage) {
+      state.windowModal.errorText = '请先输入镜像名称。';
+      state.windowModal.statusText = '';
+      renderWindowModal();
+      return;
+    }
+
+    applyContainerImageHistory(node, nextImage, 'Updated');
+    state.windowModal.draftImage = nextImage;
+    state.windowModal.errorText = '';
+    state.windowModal.statusText = `镜像已更新为 ${nextImage}`;
+    renderAll();
+  }
+
+  function rollbackContainerImageFromWindow(versionId) {
+    if (!state.windowModal || state.windowModal.type !== 'image-manager') {
+      return;
+    }
+
+    const node = getNodeById(state.windowModal.nodeId);
+    if (!node || node.type !== 'container') {
+      closeWindowModal();
+      return;
+    }
+
+    syncContainerNode(node);
+    const history = normalizeImageHistory(node.containerConfig.imageHistory, node.containerConfig.image);
+    const target = history.find((entry) => entry.id === versionId);
+    if (!target) {
+      state.windowModal.errorText = '未找到可回滚的镜像版本。';
+      state.windowModal.statusText = '';
+      renderWindowModal();
+      return;
+    }
+
+    applyContainerImageHistory(node, target.image, 'Rollback');
+    state.windowModal.draftImage = target.image;
+    state.windowModal.errorText = '';
+    state.windowModal.statusText = `已回滚到 ${target.tag}`;
+    renderAll();
+  }
+
+  function updateContainerImageFromAgui(messageId) {
+    const message = getMessageById(messageId);
+    if (!message || message.kind !== 'agui' || message.ui !== 'container-image-manager') {
+      return;
+    }
+
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      message.payload.errorText = '当前容器已不存在。';
+      message.payload.statusText = '';
+      renderChat();
+      return;
+    }
+
+    const nextImage = String((message.payload && message.payload.draftImage) || '').trim();
+    if (!nextImage) {
+      message.payload.errorText = '请先输入镜像名称。';
+      message.payload.statusText = '';
+      renderChat();
+      return;
+    }
+
+    applyContainerImageHistory(node, nextImage, 'Updated');
+    message.payload.draftImage = nextImage;
+    message.payload.errorText = '';
+    message.payload.statusText = `镜像已更新为 ${nextImage}`;
+    renderAll();
+  }
+
+  function rollbackContainerImageFromAgui(messageId, versionId) {
+    const message = getMessageById(messageId);
+    if (!message || message.kind !== 'agui' || message.ui !== 'container-image-manager') {
+      return;
+    }
+
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      message.payload.errorText = '当前容器已不存在。';
+      message.payload.statusText = '';
+      renderChat();
+      return;
+    }
+
+    syncContainerNode(node);
+    const history = normalizeImageHistory(node.containerConfig.imageHistory, node.containerConfig.image);
+    const target = history.find((entry) => entry.id === versionId);
+    if (!target) {
+      message.payload.errorText = '未找到可回滚的镜像版本。';
+      message.payload.statusText = '';
+      renderChat();
+      return;
+    }
+
+    applyContainerImageHistory(node, target.image, 'Rollback');
+    message.payload.draftImage = target.image;
+    message.payload.errorText = '';
+    message.payload.statusText = `已回滚到 ${target.tag}`;
     renderAll();
   }
 
@@ -2968,6 +3291,289 @@
         </div>
       </div>
     `;
+  }
+
+  function hashString(value) {
+    const input = String(value || '');
+    let hash = 2166136261;
+
+    for (let index = 0; index < input.length; index += 1) {
+      hash ^= input.charCodeAt(index);
+      hash = Math.imul(hash, 16777619);
+    }
+
+    return hash >>> 0;
+  }
+
+  function buildUsageSeries(basePercent, seed) {
+    const safeBase = clamp(Math.round(Number(basePercent) || 0), 4, 98);
+    const totalPoints = 12;
+    const rawSeries = Array.from({ length: totalPoints }, (_item, index) => {
+      const primaryWave = Math.sin(seed * 0.0029 + index * 0.64) * 11;
+      const secondaryWave = Math.cos(seed * 0.0017 + index * 0.41) * 6;
+      const jitter = ((seed >> (index % 8)) & 7) - 3;
+      return clamp(Math.round(safeBase + primaryWave + secondaryWave + jitter), 4, 98);
+    });
+    const delta = safeBase - rawSeries[rawSeries.length - 1];
+
+    return rawSeries.map((value, index) => {
+      const ratio = rawSeries.length > 1 ? index / (rawSeries.length - 1) : 1;
+      return clamp(Math.round(value + delta * ratio), 4, 98);
+    });
+  }
+
+  function buildChartPoints(series, width = 268, height = 92, padding = 10) {
+    const values = Array.isArray(series) && series.length ? series : [0, 0];
+    const step = values.length > 1 ? (width - padding * 2) / (values.length - 1) : 0;
+    const chartHeight = height - padding * 2;
+
+    return values.map((value, index) => ({
+      x: padding + step * index,
+      y: height - padding - (clamp(Number(value) || 0, 0, 100) / 100) * chartHeight,
+    }));
+  }
+
+  function buildChartLinePath(series, width = 268, height = 92, padding = 10) {
+    return buildChartPoints(series, width, height, padding)
+      .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+      .join(' ');
+  }
+
+  function buildChartAreaPath(series, width = 268, height = 92, padding = 10) {
+    const points = buildChartPoints(series, width, height, padding);
+    if (!points.length) {
+      return '';
+    }
+
+    const baseY = height - padding;
+
+    return [
+      `M ${points[0].x} ${baseY}`,
+      ...points.map((point, index) => `${index === 0 ? 'L' : 'L'} ${point.x} ${point.y}`),
+      `L ${points[points.length - 1].x} ${baseY}`,
+      'Z',
+    ].join(' ');
+  }
+
+  function usageLevelText(percent) {
+    if (percent >= 85) {
+      return '高负载';
+    }
+
+    if (percent >= 60) {
+      return '偏高';
+    }
+
+    if (percent >= 35) {
+      return '稳定';
+    }
+
+    return '空闲';
+  }
+
+  function metricSnapshot(used, total, kind, seed) {
+    const percent = resourceUsagePercent(used, total, kind);
+    return {
+      used,
+      total,
+      percent,
+      series: buildUsageSeries(percent, hashString(seed)),
+    };
+  }
+
+  function buildContainerMetricsPayload(node) {
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const cpuUsed = String(container.usedCpu || estimateUsedCpu(container.quotaCpu || container.cpu || '1')).trim();
+    const cpuTotal = String(container.quotaCpu || container.cpu || '1').trim();
+    const memoryUsed = String(container.usedMemory || estimateUsedMemory(container.quotaMemory || container.memory || '1Gi')).trim();
+    const memoryTotal = String(container.quotaMemory || container.memory || '1Gi').trim();
+    const diskMounted = Boolean(container.mountDisk);
+    const diskTotal = diskMounted ? String(container.diskSize || '20Gi').trim() : '';
+    const diskUsed = diskMounted ? String(container.diskUsed || estimateUsedDisk(diskTotal)).trim() : '';
+    const diskPercent = diskMounted ? resourceUsagePercent(diskUsed, diskTotal, 'capacity') : 0;
+
+    return {
+      nodeId: node.id,
+      image: container.image || '',
+      windowLabel: '最近 60 分钟',
+      cpu: metricSnapshot(cpuUsed, cpuTotal, 'cpu', `${node.id}:cpu:${container.image || ''}`),
+      memory: metricSnapshot(memoryUsed, memoryTotal, 'capacity', `${node.id}:memory:${container.image || ''}`),
+      disk: {
+        mounted: diskMounted,
+        used: diskUsed,
+        total: diskTotal,
+        percent: diskPercent,
+        mountPath: String(container.mountPath || '/data').trim(),
+      },
+    };
+  }
+
+  function buildContainerLogsPayload(node) {
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const image = String(container.image || 'agpts').trim();
+    const port = inferPortFromInput(container.startArgs || '') || String((node.details && node.details.port) || '80').trim();
+
+    return {
+      nodeId: node.id,
+      lines: [
+        '12:41:12 INFO init runtime and load injected env vars',
+        `12:41:14 INFO image ready ${image}`,
+        `12:41:18 INFO endpoint start.sh listening on 0.0.0.0:${port}`,
+        '12:41:25 INFO readiness probe passed',
+        '12:41:31 INFO traffic accepted from workspace ingress',
+      ],
+    };
+  }
+
+  function buildContainerEventsPayload(node) {
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const image = String(container.image || 'agpts').trim();
+    const status = compactStatusLabel(node.status) || 'running';
+    const statusDetail =
+      status === 'unhealthy'
+        ? '最近一次健康检查失败，建议先查看日志。'
+        : status === 'starting'
+        ? '容器仍在启动，正在等待健康检查通过。'
+        : '容器运行稳定，最近一次探针检查通过。';
+
+    return {
+      nodeId: node.id,
+      events: [
+        { time: '2m ago', tone: 'normal', title: 'Scheduled', detail: '实例已调度到当前项目工作节点。' },
+        { time: '90s ago', tone: 'normal', title: 'Pulled', detail: `镜像 ${image} 已拉取完成。` },
+        { time: '55s ago', tone: 'normal', title: 'Started', detail: '容器主进程已启动，开始接收探针检查。' },
+        {
+          time: 'just now',
+          tone: status === 'unhealthy' ? 'warning' : 'normal',
+          title: 'Health',
+          detail: statusDetail,
+        },
+      ],
+    };
+  }
+
+  function buildContainerTerminalPayload(node) {
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const image = String(container.image || '').toLowerCase();
+    const shell = /(ubuntu|debian|node|python|golang|java)/.test(image) ? '/bin/bash' : '/bin/sh';
+
+    return {
+      nodeId: node.id,
+      cwd: '/app',
+      shell,
+      command: `${shell} -lc "pwd && env | sort | sed -n '1,20p'"`,
+      tips: [
+        '打开后默认进入容器工作目录。',
+        '可直接检查环境变量、启动参数和运行日志。',
+      ],
+    };
+  }
+
+  function clearNodeSideContexts() {
+    closeDatabaseWorkspace();
+    closeEntryContext();
+    closeContainerContext();
+    closeDevboxContext();
+    state.activeConfigMessageId = null;
+  }
+
+  function openContainerTerminalWindow(node) {
+    if (!node || node.type !== 'container') {
+      return;
+    }
+
+    openWindowModal({
+      type: 'terminal',
+      nodeId: node.id,
+    });
+  }
+
+  function openContainerImageManager(node) {
+    if (!node || node.type !== 'container') {
+      return;
+    }
+
+    syncContainerNode(node);
+    state.selectedNodeId = node.id;
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
+    closeProjectListView();
+    clearNodeSideContexts();
+
+    const currentImage = String((node.containerConfig && node.containerConfig.image) || '').trim();
+    for (let index = state.messages.length - 1; index >= 0; index -= 1) {
+      const message = state.messages[index];
+      if (
+        message &&
+        message.kind === 'agui' &&
+        message.ui === 'container-image-manager' &&
+        message.payload &&
+        message.payload.nodeId === node.id
+      ) {
+        message.payload.draftImage = currentImage;
+        message.payload.errorText = '';
+        message.payload.statusText = '';
+        message.payload.visibleCount = Math.max(4, Number(message.payload.visibleCount || 4));
+        renderAll();
+        return;
+      }
+    }
+
+    addAguiMessage('container-image-manager', {
+      nodeId: node.id,
+      draftImage: currentImage,
+      visibleCount: 4,
+      statusText: '',
+      errorText: '',
+    });
+    renderAll();
+  }
+
+  function openContainerActionMessage(node, action) {
+    if (!node || node.type !== 'container') {
+      return;
+    }
+
+    if (action === 'terminal') {
+      openContainerTerminalWindow(node);
+      return;
+    }
+
+    state.selectedNodeId = node.id;
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
+    closeProjectListView();
+    clearNodeSideContexts();
+
+    const ui =
+      {
+        metrics: 'container-metrics',
+        terminal: 'container-terminal',
+        log: 'container-logs',
+        events: 'container-events',
+      }[action] || 'container-metrics';
+
+    const payload =
+      action === 'terminal'
+        ? buildContainerTerminalPayload(node)
+        : action === 'log'
+        ? buildContainerLogsPayload(node)
+        : action === 'events'
+        ? buildContainerEventsPayload(node)
+        : buildContainerMetricsPayload(node);
+
+    state.messages.push({
+      id: createId('msg'),
+      role: 'assistant',
+      kind: 'agui',
+      ui,
+      payload,
+    });
+    renderAll();
   }
 
   function showEntryCnameInfo() {
@@ -3621,7 +4227,7 @@
           status: 'done',
         },
       ],
-      selectedNodeId: 'container-demo',
+      selectedNodeId: null,
     };
   }
 
@@ -3640,7 +4246,7 @@
     state.entryView = null;
     state.containerView = null;
     state.devboxView = null;
-    state.projectListOpen = false;
+    state.projectListOpen = true;
     state.sessionStartedAt = Date.now();
     state.projectCreateGuideShown = false;
     state.canvasViewport = {
@@ -3662,6 +4268,7 @@
       title: 'FastGPT 启动失败',
       reason: '后端实例缺少 `OPENAI_API_KEY`，入口健康检查连续失败。',
     };
+    maybeOpenProjectCreateGuide();
     renderAll();
   }
 
@@ -4100,6 +4707,7 @@
   }
 
   function openPlanOverlay() {
+    closeWindowModal();
     state.planModalOpen = true;
     renderPlanOverlay();
   }
@@ -4155,6 +4763,204 @@
         </article>
       `;
     }).join('');
+  }
+
+  function openWindowModal(modal) {
+    state.windowModal = modal ? { ...modal } : null;
+    renderWindowModal();
+    applyCanvasViewport();
+    if (modal && modal.type === 'image-manager') {
+      window.setTimeout(() => {
+        const input = dom.windowOverlay && dom.windowOverlay.querySelector('[data-window-field="draftImage"]');
+        if (input) {
+          input.focus();
+          if (typeof input.setSelectionRange === 'function') {
+            const length = input.value.length;
+            input.setSelectionRange(length, length);
+          }
+        }
+      }, 0);
+    }
+  }
+
+  function closeWindowModal() {
+    if (!state.windowModal) {
+      return;
+    }
+
+    state.windowModal = null;
+    renderWindowModal();
+    applyCanvasViewport();
+  }
+
+  function buildContainerTerminalLines(node) {
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const shell = /(ubuntu|debian|node|python|golang|java)/i.test(container.image || '') ? '/bin/bash' : '/bin/sh';
+    const envLines = String(container.envVars || '')
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+
+    return [
+      `sealai@${cardTitleForNode(node) || node.title}:/app$ ${shell}`,
+      `Using image ${container.image || DEFAULT_DEPLOY_IMAGE}`,
+      `Replicas ${containerReplicaLabel(container)} · ${container.cpu} CPU / ${container.memory}`,
+      ...envLines.map((line) => `env> ${line}`),
+      `sealai@${cardTitleForNode(node) || node.title}:/app$ tail -f /var/log/app.log`,
+      '[ready] endpoint start.sh is running',
+      '[ready] health check passed',
+      '█',
+    ];
+  }
+
+  function renderTerminalWindow(node) {
+    const container = node.containerConfig || syncContainerNode(node).containerConfig;
+    const lines = buildContainerTerminalLines(node);
+
+    return `
+      <div class="floating-window floating-terminal-window" role="dialog" aria-modal="true" aria-labelledby="windowTitle">
+        <div class="floating-window-head">
+          <div class="floating-window-copy">
+            <span class="floating-window-kicker">Terminal</span>
+            <h2 id="windowTitle" class="floating-window-title">${escapeHtml(cardTitleForNode(node) || node.title)}</h2>
+          </div>
+          <div class="floating-window-head-actions">
+            <span class="db-chip">${escapeHtml(compactStatusLabel(node.status) || 'running')}</span>
+            <button class="plan-close-button" type="button" data-window-close="true" aria-label="关闭">
+              <span class="material-symbols-outlined">close</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="terminal-window-toolbar">
+          <span class="terminal-window-dot red"></span>
+          <span class="terminal-window-dot yellow"></span>
+          <span class="terminal-window-dot green"></span>
+          <span class="terminal-window-meta">${escapeHtml(container.image || DEFAULT_DEPLOY_IMAGE)}</span>
+        </div>
+
+        <div class="terminal-window-screen">
+          ${lines.map((line) => `<div class="terminal-window-line">${escapeHtml(line)}</div>`).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderImageManagerWindow(node, modal) {
+    const container = node.containerConfig || syncContainerNode(node).containerConfig;
+    const history = normalizeImageHistory(container.imageHistory, container.image);
+    const visibleCount = Math.min(history.length, Math.max(4, Number((modal && modal.visibleCount) || 4)));
+    const visibleEntries = history.slice(0, visibleCount);
+    const draftImage = String((modal && modal.draftImage) || container.image || '').trim();
+    const statusText = String((modal && modal.statusText) || '').trim();
+    const errorText = String((modal && modal.errorText) || '').trim();
+    const hasMore = visibleCount < history.length;
+
+    return `
+      <div class="floating-window floating-image-window" role="dialog" aria-modal="true" aria-labelledby="windowTitle">
+        <div class="floating-window-head">
+          <div class="floating-window-copy">
+            <span class="floating-window-kicker">Image</span>
+            <h2 id="windowTitle" class="floating-window-title">版本管理</h2>
+          </div>
+          <button class="plan-close-button" type="button" data-window-close="true" aria-label="关闭">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </div>
+
+        <section class="floating-window-section">
+          <div class="floating-window-section-head">
+            <strong>当前镜像</strong>
+            <span>${escapeHtml(cardTitleForNode(node) || node.title)}</span>
+          </div>
+          <div class="image-current-chip">${escapeHtml(container.image || DEFAULT_DEPLOY_IMAGE)}</div>
+        </section>
+
+        <section class="floating-window-section">
+          <div class="floating-window-section-head">
+            <strong>修改镜像名称</strong>
+            <span>更新后将立即替换当前运行版本。</span>
+          </div>
+          <div class="image-update-form">
+            <input
+              class="agui-input"
+              type="text"
+              value="${escapeHtml(draftImage)}"
+              data-window-field="draftImage"
+              placeholder="ghcr.io/sealai/orders-api:2026.04.14"
+            />
+            <button class="db-primary-button" type="button" data-window-action="update-image">Update</button>
+          </div>
+          ${errorText ? `<div class="floating-window-status error">${escapeHtml(errorText)}</div>` : ''}
+          ${statusText ? `<div class="floating-window-status">${escapeHtml(statusText)}</div>` : ''}
+        </section>
+
+        <section class="floating-window-section">
+          <div class="floating-window-section-head">
+            <strong>历史版本</strong>
+            <span>支持查看更多版本并快速 rollback。</span>
+          </div>
+          <div class="image-version-list">
+            ${visibleEntries
+              .map(
+                (entry) => `
+                  <div class="image-version-item ${entry.status === 'current' ? 'current' : ''}">
+                    <div class="image-version-copy">
+                      <div class="image-version-top">
+                        <strong>${escapeHtml(entry.tag || parseImageReference(entry.image).tag)}</strong>
+                        <span>${escapeHtml(entry.createdAt || '')}</span>
+                      </div>
+                      <div class="image-version-ref">${escapeHtml(entry.image)}</div>
+                    </div>
+                    ${
+                      entry.status === 'current'
+                        ? '<span class="db-chip">Current</span>'
+                        : `<button
+                            class="db-ghost-button"
+                            type="button"
+                            data-window-action="rollback-image"
+                            data-image-version-id="${escapeHtml(entry.id)}"
+                          >Rollback</button>`
+                    }
+                  </div>
+                `,
+              )
+              .join('')}
+          </div>
+          ${
+            hasMore
+              ? '<button class="db-ghost-button floating-window-more" type="button" data-window-action="show-more-history">查看更多历史版本</button>'
+              : ''
+          }
+        </section>
+      </div>
+    `;
+  }
+
+  function renderWindowModal() {
+    if (!dom.windowOverlay || !dom.windowBody) {
+      return;
+    }
+
+    dom.windowOverlay.hidden = !state.windowModal;
+    if (!state.windowModal) {
+      dom.windowBody.innerHTML = '';
+      return;
+    }
+
+    const modal = state.windowModal;
+    const node = getNodeById(modal.nodeId);
+    if (!node || node.type !== 'container') {
+      closeWindowModal();
+      return;
+    }
+
+    dom.windowBody.innerHTML =
+      modal.type === 'image-manager'
+        ? renderImageManagerWindow(node, modal)
+        : renderTerminalWindow(node);
   }
 
   function renderNav() {
@@ -4260,20 +5066,38 @@
                   <span class="node-domain-label">外网域名</span>
                   <span class="node-domain-main">
                     <span class="node-domain-value">${escapeHtml(entryConfig.externalDomain)}</span>
-                    <span
-                      class="node-domain-health ${entryConfig.externalStatus === 'issue' ? 'issue' : 'healthy'}"
-                      title="${entryConfig.externalStatus === 'issue' ? '不正常' : '健康'}"
-                    ></span>
+                    <span class="node-domain-actions">
+                      <span
+                        class="node-domain-copy material-symbols-outlined"
+                        role="button"
+                        tabindex="-1"
+                        data-node-copy="${escapeHtml(entryConfig.externalDomain)}"
+                        title="复制域名"
+                      >content_copy</span>
+                      <span
+                        class="node-domain-health ${entryConfig.externalStatus === 'issue' ? 'issue' : 'healthy'}"
+                        title="${entryConfig.externalStatus === 'issue' ? '不正常' : '健康'}"
+                      ></span>
+                    </span>
                   </span>
                 </div>
                 <div class="node-domain-row" data-node-domain="${escapeHtml(entryConfig.internalDomain)}">
                   <span class="node-domain-label">内网域名</span>
                   <span class="node-domain-main">
                     <span class="node-domain-value">${escapeHtml(entryConfig.internalDomain)}</span>
-                    <span
-                      class="node-domain-health ${entryConfig.internalStatus === 'issue' ? 'issue' : 'healthy'}"
-                      title="${entryConfig.internalStatus === 'issue' ? '不正常' : '健康'}"
-                    ></span>
+                    <span class="node-domain-actions">
+                      <span
+                        class="node-domain-copy material-symbols-outlined"
+                        role="button"
+                        tabindex="-1"
+                        data-node-copy="${escapeHtml(entryConfig.internalDomain)}"
+                        title="复制域名"
+                      >content_copy</span>
+                      <span
+                        class="node-domain-health ${entryConfig.internalStatus === 'issue' ? 'issue' : 'healthy'}"
+                        title="${entryConfig.internalStatus === 'issue' ? '不正常' : '健康'}"
+                      ></span>
+                    </span>
                   </span>
                 </div>
               </div>
@@ -4367,18 +5191,37 @@
                 <span class="node-container-label">镜像</span>
                 <span class="node-container-replicas">${escapeHtml(containerConfig.replicas)} 副本</span>
               </div>
-              <div class="node-container-image">${escapeHtml(containerConfig.image)}</div>
-              <div class="node-container-meters">
-                ${renderContainerMeter('CPU', containerConfig.usedCpu, containerConfig.quotaCpu, { kind: 'cpu' })}
-                ${renderContainerMeter('内存', containerConfig.usedMemory, containerConfig.quotaMemory)}
-                ${
-                  containerConfig.mountDisk
-                    ? renderContainerMeter('磁盘', containerConfig.diskUsed || estimateUsedDisk(containerConfig.diskSize), containerConfig.diskSize, {
-                        kind: 'capacity',
-                        icon: 'storage',
-                      })
-                    : ''
-                }
+              <span
+                class="node-container-image node-container-image-action"
+                role="button"
+                tabindex="-1"
+                data-node-image-manage="true"
+                data-node-control="true"
+                title="版本管理"
+              >${escapeHtml(containerConfig.image)}</span>
+              <div class="node-container-tools">
+                ${[
+                  { action: 'metrics', icon: 'monitoring', label: 'Metrics' },
+                  { action: 'terminal', icon: 'terminal', label: 'Terminal' },
+                  { action: 'log', icon: 'article', label: 'Log' },
+                  { action: 'events', icon: 'event_note', label: 'Events' },
+                ]
+                  .map(
+                    (tool) => `
+                      <span
+                        class="node-container-tool"
+                        role="button"
+                        tabindex="-1"
+                        data-node-action="${tool.action}"
+                        data-node-control="true"
+                        title="${tool.label}"
+                        aria-label="${tool.label}"
+                      >
+                        <span class="material-symbols-outlined">${tool.icon}</span>
+                      </span>
+                    `,
+                  )
+                  .join('')}
               </div>
             `
           : '';
@@ -4514,6 +5357,22 @@
           return;
         }
 
+        const actionTarget = event.target.closest('[data-node-action]');
+        if (actionTarget && node.type === 'container') {
+          event.preventDefault();
+          event.stopPropagation();
+          openContainerActionMessage(node, actionTarget.dataset.nodeAction || 'metrics');
+          return;
+        }
+
+        const imageManageTarget = event.target.closest('[data-node-image-manage]');
+        if (imageManageTarget && node.type === 'container') {
+          event.preventDefault();
+          event.stopPropagation();
+          openContainerImageManager(node);
+          return;
+        }
+
         if (state.suppressClickNodeId === node.id) {
           state.suppressClickNodeId = null;
           return;
@@ -4566,6 +5425,8 @@
           event.target.closest('[data-node-domain]') ||
           event.target.closest('[data-node-copy]') ||
           event.target.closest('[data-node-toggle]') ||
+          event.target.closest('[data-node-image-manage]') ||
+          event.target.closest('[data-node-action]') ||
           event.target.closest('[data-node-control]')
         ) {
           return;
@@ -5453,6 +6314,17 @@
     renderChat();
   }
 
+  function mockGithubRepos(login = 'fanux') {
+    const owner = String(login || 'fanux').trim() || 'fanux';
+    return [
+      `${owner}/sealai`,
+      `${owner}/sealos`,
+      `${owner}/sealos-cloud`,
+      `${owner}/devbox-template`,
+      `${owner}/workspace-demo`,
+    ];
+  }
+
   function formatDatabaseCell(value) {
     if (value === null || value === undefined) {
       return '-';
@@ -5956,6 +6828,7 @@
     renderSidebarContext();
     renderChat();
     renderPlanOverlay();
+    renderWindowModal();
     setAgentState(state.agentBusy, state.currentTask);
   }
 
@@ -6019,6 +6892,48 @@
             : `已选择 ${tier.name}。当前价格为 ${pricing.headline}${pricing.subline}。`,
         );
         closePlanOverlay();
+      });
+    }
+
+    if (dom.windowOverlay) {
+      dom.windowOverlay.addEventListener('click', (event) => {
+        const closeTarget = event.target.closest && event.target.closest('[data-window-close]');
+        const modalTarget = event.target.closest && event.target.closest('.floating-window');
+        if (closeTarget || !modalTarget) {
+          closeWindowModal();
+          return;
+        }
+
+        const actionTarget = event.target.closest && event.target.closest('[data-window-action]');
+        if (!actionTarget || !state.windowModal) {
+          return;
+        }
+
+        if (actionTarget.dataset.windowAction === 'show-more-history') {
+          state.windowModal.visibleCount = Math.max(4, Number(state.windowModal.visibleCount || 4)) + 4;
+          renderWindowModal();
+          return;
+        }
+
+        if (actionTarget.dataset.windowAction === 'update-image') {
+          updateContainerImageFromWindow();
+          return;
+        }
+
+        if (actionTarget.dataset.windowAction === 'rollback-image') {
+          rollbackContainerImageFromWindow(actionTarget.dataset.imageVersionId || '');
+        }
+      });
+
+      dom.windowOverlay.addEventListener('input', (event) => {
+        const field = event.target.closest && event.target.closest('[data-window-field]');
+        if (!field || !state.windowModal) {
+          return;
+        }
+
+        if (field.dataset.windowField === 'draftImage') {
+          updateWindowModalDraft('draftImage', field.value);
+        }
       });
     }
 
@@ -6098,6 +7013,8 @@
 
       message.payload[input.dataset.aguiField] = input.value;
       message.payload.error = '';
+      message.payload.errorText = '';
+      message.payload.statusText = '';
 
       if (message.ui === 'app-store' && input.dataset.aguiField === 'search') {
         const matches = filterAppCatalog(message.payload.search);
@@ -6151,7 +7068,16 @@
 
       if (message.ui === 'github-import' && button.dataset.aguiAction === 'github-auth') {
         message.payload.authConnected = true;
-        message.payload.selectedRepo = 'fanux/sealai';
+        message.payload.accountLogin = message.payload.accountLogin || 'fanux';
+        message.payload.availableRepos = mockGithubRepos(message.payload.accountLogin);
+        message.payload.selectedRepo = message.payload.selectedRepo || message.payload.availableRepos[0] || '';
+        message.payload.error = '';
+        renderChat();
+        return;
+      }
+
+      if (message.ui === 'github-import' && button.dataset.aguiAction === 'github-select-repo') {
+        message.payload.selectedRepo = button.dataset.repo || '';
         message.payload.error = '';
         renderChat();
         return;
@@ -6200,6 +7126,23 @@
 
       if (message.ui === 'database-deploy' && button.dataset.aguiAction === 'database-deploy') {
         void deployDatabaseFromAgui(message.id);
+        return;
+      }
+
+      if (message.ui === 'container-image-manager' && button.dataset.aguiAction === 'show-more-history') {
+        message.payload.visibleCount = Math.max(4, Number(message.payload.visibleCount || 4)) + 4;
+        message.payload.errorText = '';
+        renderChat();
+        return;
+      }
+
+      if (message.ui === 'container-image-manager' && button.dataset.aguiAction === 'update-image') {
+        updateContainerImageFromAgui(message.id);
+        return;
+      }
+
+      if (message.ui === 'container-image-manager' && button.dataset.aguiAction === 'rollback-image') {
+        rollbackContainerImageFromAgui(message.id, button.dataset.imageVersionId || '');
       }
     });
 
@@ -6840,7 +7783,7 @@
     }
 
     const handleEdgeDeleteKey = (event) => {
-      if (state.planModalOpen) {
+      if (state.planModalOpen || state.windowModal) {
         return;
       }
 
@@ -6873,8 +7816,15 @@
       cancelLinkGesture(event.pointerId);
     });
     window.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && state.planModalOpen) {
-        closePlanOverlay();
+      if (event.key === 'Escape') {
+        if (state.windowModal) {
+          closeWindowModal();
+          return;
+        }
+
+        if (state.planModalOpen) {
+          closePlanOverlay();
+        }
       }
     });
     document.addEventListener('keydown', handleEdgeDeleteKey, true);
@@ -6979,10 +7929,13 @@
     }
 
     const draft = (message.payload.urlDraft || '').trim();
-    const repoUrl = draft || (message.payload.authConnected ? `https://github.com/${message.payload.selectedRepo}` : '');
+    const selectedRepo = String(message.payload.selectedRepo || '').trim();
+    const repoUrl = draft || (message.payload.authConnected && selectedRepo ? `https://github.com/${selectedRepo}` : '');
 
     if (!repoUrl) {
-      message.payload.error = '请输入 GitHub 仓库地址，或先完成 GitHub 授权。';
+      message.payload.error = message.payload.authConnected
+        ? '请选择一个已授权的 GitHub 仓库，或直接输入仓库地址。'
+        : '请输入 GitHub 仓库地址，或先完成 GitHub 授权。';
       renderChat();
       return;
     }
@@ -8162,7 +9115,12 @@
   }
 
   function canvasInteractionsEnabled() {
-    return Boolean(dom.canvasStage && dom.canvasWorld) && !state.projectListOpen && !Boolean(activeDatabaseContext());
+    return (
+      Boolean(dom.canvasStage && dom.canvasWorld) &&
+      !state.projectListOpen &&
+      !Boolean(activeDatabaseContext()) &&
+      !Boolean(state.windowModal)
+    );
   }
 
   function clampCanvasScale(value) {
@@ -8441,6 +9399,8 @@
 
     const message = addAguiMessage('github-import', {
       authConnected: false,
+      accountLogin: 'fanux',
+      availableRepos: [],
       selectedRepo: '',
       urlDraft: '',
       deployState: 'idle',
@@ -9348,6 +10308,328 @@
     `;
   }
 
+  function renderMetricsChart(metric, tone) {
+    const series = (metric && metric.series) || [];
+    const width = 268;
+    const height = 92;
+    const padding = 10;
+    const linePath = buildChartLinePath(series, width, height, padding);
+    const areaPath = buildChartAreaPath(series, width, height, padding);
+
+    return `
+      <svg class="metrics-chart-svg ${tone}" viewBox="0 0 ${width} ${height}" aria-hidden="true" focusable="false">
+        <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" class="metrics-chart-grid"></line>
+        <line x1="${padding}" y1="${height / 2}" x2="${width - padding}" y2="${height / 2}" class="metrics-chart-grid"></line>
+        <line x1="${padding}" y1="${padding}" x2="${width - padding}" y2="${padding}" class="metrics-chart-grid"></line>
+        <path d="${areaPath}" class="metrics-chart-area"></path>
+        <path d="${linePath}" class="metrics-chart-line"></path>
+      </svg>
+    `;
+  }
+
+  function renderContainerMetricsMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      return renderMissingConfigMessage('容器监控');
+    }
+
+    const payload = message.payload || buildContainerMetricsPayload(node);
+    const cpu = payload.cpu || metricSnapshot('0.4', '1', 'cpu', `${node.id}:cpu:fallback`);
+    const memory = payload.memory || metricSnapshot('512Mi', '1Gi', 'capacity', `${node.id}:memory:fallback`);
+    const disk = payload.disk || { mounted: false, used: '', total: '', percent: 0, mountPath: '/data' };
+    const status = compactStatusLabel(node.status) || 'running';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-metrics-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} 资源监控</strong>
+              <span>${escapeHtml(payload.windowLabel || '最近一段时间的资源波动。')}</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(status)}</div>
+          </div>
+
+          <div class="container-metrics-grid">
+            <section class="metrics-chart-card">
+              <div class="metrics-chart-head">
+                <div>
+                  <strong>CPU</strong>
+                  <span>${escapeHtml(usageLevelText(cpu.percent))}</span>
+                </div>
+                <div class="metrics-chart-value">
+                  <span>${escapeHtml(`${cpu.used} / ${cpu.total}`)}</span>
+                  <strong>${escapeHtml(`${cpu.percent}%`)}</strong>
+                </div>
+              </div>
+              ${renderMetricsChart(cpu, 'cpu')}
+              <div class="metrics-chart-foot">
+                <span>-60m</span>
+                <span>now</span>
+              </div>
+            </section>
+
+            <section class="metrics-chart-card">
+              <div class="metrics-chart-head">
+                <div>
+                  <strong>内存</strong>
+                  <span>${escapeHtml(usageLevelText(memory.percent))}</span>
+                </div>
+                <div class="metrics-chart-value">
+                  <span>${escapeHtml(`${memory.used} / ${memory.total}`)}</span>
+                  <strong>${escapeHtml(`${memory.percent}%`)}</strong>
+                </div>
+              </div>
+              ${renderMetricsChart(memory, 'memory')}
+              <div class="metrics-chart-foot">
+                <span>-60m</span>
+                <span>now</span>
+              </div>
+            </section>
+          </div>
+
+          <section class="metrics-disk-card">
+            <div class="metrics-disk-head">
+              <div>
+                <strong>磁盘</strong>
+                <span>${disk.mounted ? `挂载目录 ${escapeHtml(disk.mountPath || '/data')}` : '当前未挂载持久磁盘'}</span>
+              </div>
+              ${
+                disk.mounted
+                  ? `<div class="metrics-chart-value">
+                      <span>${escapeHtml(`${disk.used} / ${disk.total}`)}</span>
+                      <strong>${escapeHtml(`${disk.percent}%`)}</strong>
+                    </div>`
+                  : '<div class="db-chip">Stateless</div>'
+              }
+            </div>
+            ${
+              disk.mounted
+                ? `<div class="container-meter-track metrics-disk-track">
+                    <span class="container-meter-fill metrics-disk-fill" style="width:${disk.percent}%"></span>
+                  </div>`
+                : '<div class="agui-empty">当前实例没有配置自定义磁盘。</div>'
+            }
+          </section>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderContainerTerminalMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      return renderMissingConfigMessage('容器终端');
+    }
+
+    const payload = message.payload || buildContainerTerminalPayload(node);
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-terminal-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} Terminal</strong>
+              <span>可直接检查运行目录、环境变量和进程状态。</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(payload.shell || '/bin/sh')}</div>
+          </div>
+          <div class="db-chip-row">
+            <div class="db-chip">cwd ${escapeHtml(payload.cwd || '/app')}</div>
+            <div class="db-chip">shell ${escapeHtml(payload.shell || '/bin/sh')}</div>
+          </div>
+          <div class="db-sql-block">
+            <pre>${escapeHtml(payload.command || '/bin/sh')}</pre>
+          </div>
+          <div class="metrics-event-list">
+            ${Array.isArray(payload.tips)
+              ? payload.tips.map((tip) => `<div class="metrics-event-item"><strong>Hint</strong><span>${escapeHtml(tip)}</span></div>`).join('')
+              : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderContainerLogsMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      return renderMissingConfigMessage('容器日志');
+    }
+
+    const payload = message.payload || buildContainerLogsPayload(node);
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-log-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} Log</strong>
+              <span>最近输出的关键运行日志。</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(compactStatusLabel(node.status) || 'running')}</div>
+          </div>
+          <div class="db-sql-block container-log-output">
+            <pre>${escapeHtml(((payload.lines && payload.lines.join('\n')) || '').trim())}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderContainerEventsMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      return renderMissingConfigMessage('容器事件');
+    }
+
+    const payload = message.payload || buildContainerEventsPayload(node);
+    const events = Array.isArray(payload.events) ? payload.events : [];
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-events-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} Events</strong>
+              <span>实例调度、启动与健康检查事件。</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(events.length ? `${events.length} items` : '0 items')}</div>
+          </div>
+          <div class="metrics-event-list">
+            ${
+              events.length
+                ? events
+                    .map(
+                      (item) => `
+                        <div class="metrics-event-item ${item.tone === 'warning' ? 'warning' : ''}">
+                          <div class="metrics-event-head">
+                            <strong>${escapeHtml(item.title || '')}</strong>
+                            <span>${escapeHtml(item.time || '')}</span>
+                          </div>
+                          <div class="metrics-event-detail">${escapeHtml(item.detail || '')}</div>
+                        </div>
+                      `,
+                    )
+                    .join('')
+                : '<div class="agui-empty">当前没有可展示的事件。</div>'
+            }
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderContainerImageManagerMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'container') {
+      return renderMissingConfigMessage('镜像版本管理');
+    }
+
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const payload = message.payload || {};
+    const history = normalizeImageHistory(container.imageHistory, container.image);
+    const visibleCount = Math.min(history.length, Math.max(4, Number(payload.visibleCount || 4)));
+    const visibleEntries = history.slice(0, visibleCount);
+    const draftImage = String(payload.draftImage || container.image || '').trim();
+    const statusText = String(payload.statusText || '').trim();
+    const errorText = String(payload.errorText || '').trim();
+    const hasMore = visibleCount < history.length;
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-image-manager-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} 镜像版本管理</strong>
+              <span>支持修改镜像名、查看历史版本并执行 Rollback。</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(compactStatusLabel(node.status) || 'running')}</div>
+          </div>
+
+          <section class="floating-window-section">
+            <div class="floating-window-section-head">
+              <strong>当前镜像</strong>
+              <span>${escapeHtml(cardTitleForNode(node) || node.title)}</span>
+            </div>
+            <div class="image-current-chip">${escapeHtml(container.image || DEFAULT_DEPLOY_IMAGE)}</div>
+          </section>
+
+          <section class="floating-window-section">
+            <div class="floating-window-section-head">
+              <strong>修改镜像名称</strong>
+              <span>更新后将立即替换当前运行版本。</span>
+            </div>
+            <div class="image-update-form">
+              <input
+                class="agui-input"
+                type="text"
+                value="${escapeHtml(draftImage)}"
+                data-agui-field="draftImage"
+                data-message-id="${message.id}"
+                placeholder="ghcr.io/sealai/orders-api:2026.04.14"
+              />
+              <button class="db-primary-button" type="button" data-agui-action="update-image" data-message-id="${message.id}">Update</button>
+            </div>
+            ${errorText ? `<div class="floating-window-status error">${escapeHtml(errorText)}</div>` : ''}
+            ${statusText ? `<div class="floating-window-status">${escapeHtml(statusText)}</div>` : ''}
+          </section>
+
+          <section class="floating-window-section">
+            <div class="floating-window-section-head">
+              <strong>历史版本</strong>
+              <span>支持查看更多版本并快速 Rollback。</span>
+            </div>
+            <div class="image-version-list">
+              ${visibleEntries
+                .map(
+                  (entry) => `
+                    <div class="image-version-item ${entry.status === 'current' ? 'current' : ''}">
+                      <div class="image-version-copy">
+                        <div class="image-version-top">
+                          <strong>${escapeHtml(entry.tag || parseImageReference(entry.image).tag)}</strong>
+                          <span>${escapeHtml(entry.createdAt || '')}</span>
+                        </div>
+                        <div class="image-version-ref">${escapeHtml(entry.image)}</div>
+                      </div>
+                      ${
+                        entry.status === 'current'
+                          ? '<span class="db-chip">Current</span>'
+                          : `<button
+                              class="db-ghost-button"
+                              type="button"
+                              data-agui-action="rollback-image"
+                              data-message-id="${message.id}"
+                              data-image-version-id="${escapeHtml(entry.id)}"
+                            >Rollback</button>`
+                      }
+                    </div>
+                  `,
+                )
+                .join('')}
+            </div>
+            ${
+              hasMore
+                ? `<button
+                    class="db-ghost-button floating-window-more"
+                    type="button"
+                    data-agui-action="show-more-history"
+                    data-message-id="${message.id}"
+                  >查看更多历史版本</button>`
+                : ''
+            }
+          </section>
+        </div>
+      </div>
+    `;
+  }
+
   function renderAguiMessage(message) {
     if (message.ui === 'database-config') {
       return renderDatabaseConfigMessage(message);
@@ -9367,6 +10649,26 @@
 
     if (message.ui === 'env-injection') {
       return renderEnvInjectionMessage(message);
+    }
+
+    if (message.ui === 'container-metrics') {
+      return renderContainerMetricsMessage(message);
+    }
+
+    if (message.ui === 'container-terminal') {
+      return renderContainerTerminalMessage(message);
+    }
+
+    if (message.ui === 'container-logs') {
+      return renderContainerLogsMessage(message);
+    }
+
+    if (message.ui === 'container-events') {
+      return renderContainerEventsMessage(message);
+    }
+
+    if (message.ui === 'container-image-manager') {
+      return renderContainerImageManagerMessage(message);
     }
 
     if (message.ui === 'skills-guide') {
@@ -9536,14 +10838,18 @@
     const payload = message.payload || {};
     const urlDraft = escapeHtml(payload.urlDraft || '');
     const authConnected = Boolean(payload.authConnected);
+    const availableRepos = Array.isArray(payload.availableRepos) ? payload.availableRepos.filter(Boolean) : [];
+    const selectedRepo = String(payload.selectedRepo || '').trim();
     const deployState = payload.deployState || 'idle';
     const statusText =
       deployState === 'deploying'
         ? 'Deploying repository...'
         : deployState === 'done'
         ? `Last deploy: ${payload.lastRepoUrl || ''}`
+        : authConnected && selectedRepo
+        ? `Authorized repo: ${selectedRepo}`
         : authConnected
-        ? `Authorized repo: ${payload.selectedRepo}`
+        ? 'GitHub 已授权，请从仓库列表中选择一个仓库。'
         : 'Select a method to import your repository.';
 
     return `
@@ -9586,12 +10892,32 @@
                 >
                   ${authConnected ? 'GitHub Connected' : 'Authorize GitHub'}
                 </button>
-                ${
-                  authConnected
-                    ? `<span class="agui-repo-chip">${escapeHtml(payload.selectedRepo)}</span>`
-                    : ''
-                }
+                ${authConnected && selectedRepo ? `<span class="agui-repo-chip">${escapeHtml(selectedRepo)}</span>` : ''}
               </div>
+              ${
+                authConnected
+                  ? `
+                      <div class="agui-repo-list">
+                        ${availableRepos
+                          .map(
+                            (repo) => `
+                              <button
+                                type="button"
+                                class="agui-repo-option ${selectedRepo === repo ? 'active' : ''}"
+                                data-agui-action="github-select-repo"
+                                data-repo="${escapeHtml(repo)}"
+                                data-message-id="${message.id}"
+                              >
+                                <strong>${escapeHtml(repo)}</strong>
+                                <span>${selectedRepo === repo ? '已选择' : '点击选择仓库'}</span>
+                              </button>
+                            `,
+                          )
+                          .join('')}
+                      </div>
+                    `
+                  : ''
+              }
             </section>
           </div>
 
