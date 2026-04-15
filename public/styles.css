@@ -2307,6 +2307,29 @@ button {
   line-height: 1.5;
 }
 
+.devbox-command-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.devbox-primary-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.devbox-action-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.devbox-action-row .db-ghost-button,
+.devbox-action-row .db-primary-button {
+  width: 100%;
+}
+
 .canvas-grid,
 .edge-layer,
 .node-layer {
@@ -2541,7 +2564,7 @@ button {
 
 .node-card[data-type='devbox'].is-expanded {
   width: 286px;
-  min-height: 236px;
+  min-height: 260px;
 }
 
 .node-control-stack {
@@ -3023,29 +3046,133 @@ button {
   font: 10px var(--font-mono);
 }
 
-.node-database-meters {
+.node-db-connect-inline {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+}
+
+.node-db-connect-inline-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-db-connect-inline-main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  border: 1px solid rgba(var(--node-accent-rgb), 0.2);
+  background: rgba(8, 16, 32, 0.82);
+}
+
+.node-db-connect-inline-value {
+  min-width: 0;
+  color: var(--text);
+  font: 10px/1.5 var(--font-mono);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.node-db-inline-copy {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.node-db-inline-copy:hover {
+  color: var(--text);
+}
+
+.node-db-access-toggle.is-on {
+  border-color: rgba(111, 220, 152, 0.34);
+  color: #7ad89e;
+}
+
+.db-access-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+
+.db-access-toggle-main {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.db-access-toggle input {
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.db-access-toggle strong {
+  color: var(--text);
+  font: 10px var(--font-mono);
+  font-weight: 600;
+}
+
+.db-address-list {
   display: grid;
   gap: 8px;
-  margin-top: 10px;
 }
 
-.node-db-connect {
-  display: grid;
+.db-address-list.compact {
   gap: 6px;
-  margin-top: 10px;
 }
 
-.node-db-connect-row {
+.db-address-row {
+  display: grid;
+  gap: 4px;
+  padding: 8px 9px;
+  border: 1px solid rgba(var(--node-accent-rgb), 0.2);
+  background: rgba(8, 16, 32, 0.82);
+}
+
+.db-address-label {
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.06em;
+}
+
+.db-address-main {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
 }
 
-.node-db-connect-value {
+.db-address-value {
   color: var(--text);
   font: 10px/1.55 var(--font-mono);
   overflow-wrap: anywhere;
+}
+
+.db-copy-action {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--line-2);
+  background: rgba(11, 20, 41, 0.82);
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  cursor: pointer;
+}
+
+.db-copy-action:hover {
+  border-color: var(--primary);
+  color: var(--text);
 }
 
 .node-devbox-stack {
@@ -3120,6 +3247,38 @@ button {
   font: 10px var(--font-mono);
 }
 
+.devbox-key-grid {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.devbox-key-grid.compact {
+  margin-top: 0;
+}
+
+.devbox-key-item {
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border: 1px solid rgba(var(--node-accent-rgb), 0.2);
+  background: rgba(8, 16, 32, 0.82);
+}
+
+.devbox-key-item span {
+  color: var(--text-soft);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+.devbox-key-item strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .node-inline-action {
   display: inline-flex;
   align-items: center;
@@ -3163,6 +3322,10 @@ button {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
+}
+
+.node-tool-row-3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .node-container-tool {
@@ -3395,6 +3558,84 @@ button {
 .agui-card-pill.connected {
   color: var(--success);
   border-color: rgba(113, 242, 157, 0.28);
+}
+
+.devbox-release-body {
+  grid-template-columns: 248px minmax(0, 1fr);
+}
+
+.devbox-release-publisher {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.devbox-release-list,
+.devbox-template-publish-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.devbox-release-item {
+  width: 100%;
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 16, 32, 0.82);
+  text-align: left;
+  cursor: pointer;
+}
+
+.devbox-release-item.active {
+  border-color: var(--primary);
+  background: rgba(16, 28, 52, 0.96);
+}
+
+.devbox-release-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.devbox-release-item-head strong,
+.devbox-template-publish-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.devbox-release-item-head span,
+.devbox-release-item > span,
+.devbox-template-publish-copy span {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.devbox-release-main {
+  grid-template-rows: auto auto auto auto minmax(0, 1fr);
+}
+
+.devbox-release-actions,
+.devbox-template-publish-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.devbox-template-publish-item {
+  display: grid;
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  background: rgba(8, 16, 32, 0.82);
+}
+
+.devbox-template-publish-copy {
+  display: grid;
+  gap: 4px;
 }
 
 .container-metrics-grid {
@@ -3984,12 +4225,19 @@ button {
   }
 
   .db-workspace-body,
-  .db-config-grid {
+  .db-config-grid,
+  .devbox-release-body,
+  .devbox-primary-grid {
     grid-template-columns: 1fr;
   }
 
   .container-config-summary,
-  .container-slider-grid {
+  .container-slider-grid,
+  .devbox-action-row {
+    grid-template-columns: 1fr;
+  }
+
+  .devbox-command-row {
     grid-template-columns: 1fr;
   }
 

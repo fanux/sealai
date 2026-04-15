@@ -1331,6 +1331,68 @@
     return 'sleep infinity';
   }
 
+  function defaultDevboxWorkingDir(template, title) {
+    const workspaceName = slugifyText(title || (template && template.id) || 'workspace') || 'workspace';
+    return `/workspace/${workspaceName}`;
+  }
+
+  function defaultDevboxImage(options = {}, template) {
+    const resolvedTemplate =
+      template ||
+      getDevboxTemplateById(options.templateId) ||
+      getDevboxTemplateById(options.templateName) ||
+      resolveDevboxTemplate(options.templateName || options.title || 'nodejs');
+    const owner = slugifyText(options.title || options.owner || 'workspace') || 'workspace';
+    const templateTag = slugifyText((resolvedTemplate && resolvedTemplate.id) || 'nodejs') || 'nodejs';
+    const versionTag = String(options.version || defaultDevboxVersion(resolvedTemplate) || 'latest')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/\//g, '-');
+    return `ghcr.io/sealai/devbox-${owner}:${templateTag}-${versionTag || 'latest'}`;
+  }
+
+  function normalizeDevboxPublishedTemplates(templates) {
+    if (!Array.isArray(templates)) {
+      return [];
+    }
+
+    return templates
+      .map((item) => {
+        if (!item) {
+          return null;
+        }
+
+        const image = String((item && item.image) || '').trim();
+        if (!image) {
+          return null;
+        }
+
+        return {
+          id: String(item.id || createId('tmpl')).trim(),
+          name: String(item.name || '').trim() || 'Workspace Template',
+          image,
+          templateId: String(item.templateId || '').trim() || 'nodejs',
+          version: String(item.version || parseImageReference(image).tag || 'latest').trim(),
+          createdAt: String(item.createdAt || '刚刚').trim(),
+          note: String(item.note || '').trim() || '由开发环境版本发布生成',
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function cloneDevboxConfig(config = {}) {
+    return {
+      ...config,
+      releaseHistory: normalizeImageHistory(config.releaseHistory, config.image).map((entry) => ({ ...entry })),
+      publishedTemplates: normalizeDevboxPublishedTemplates(config.publishedTemplates).map((entry) => ({ ...entry })),
+    };
+  }
+
+  function suggestDevboxReleaseTag(config = {}) {
+    const history = normalizeImageHistory(config.releaseHistory, config.image);
+    return `v${Math.max(1, history.length)}.0.0`;
+  }
+
   function createDevboxConfig(options = {}) {
     const template =
       getDevboxTemplateById(options.templateId) ||
@@ -1342,6 +1404,7 @@
     const port = String(options.port || DEFAULT_DEPLOY_PORT)
       .trim()
       .replace(/\/tcp$/i, '');
+    const image = String(options.image || defaultDevboxImage(options, template)).trim();
 
     return {
       templateId: template ? template.id : 'nodejs',
@@ -1356,7 +1419,11 @@
       diskSize,
       diskUsed: String(options.diskUsed || estimateUsedDisk(diskSize)).trim(),
       startCommand: String(options.startCommand || defaultDevboxStartCommand(template, port)).trim(),
+      workingDir: String(options.workingDir || defaultDevboxWorkingDir(template, options.title || options.owner)).trim(),
       port,
+      image,
+      releaseHistory: normalizeImageHistory(options.releaseHistory, image),
+      publishedTemplates: normalizeDevboxPublishedTemplates(options.publishedTemplates),
     };
   }
 
@@ -1380,7 +1447,11 @@
         diskSize: details.diskSize,
         diskUsed: details.diskUsed,
         startCommand: details.startCommand,
+        workingDir: details.workingDir,
         port: details.port,
+        image: details.image,
+        releaseHistory: details.releaseHistory,
+        publishedTemplates: details.publishedTemplates,
         title: node.title,
       }),
       ...(node.devboxConfig || {}),
@@ -1405,6 +1476,21 @@
     if (!nextConfig.diskUsed) {
       nextConfig.diskUsed = estimateUsedDisk(nextConfig.diskSize);
     }
+    if (!nextConfig.workingDir) {
+      nextConfig.workingDir = defaultDevboxWorkingDir(getDevboxTemplateById(nextConfig.templateId), node.title);
+    }
+    if (!nextConfig.image) {
+      nextConfig.image = defaultDevboxImage(
+        {
+          title: node.title,
+          templateId: nextConfig.templateId,
+          version: nextConfig.version,
+        },
+        getDevboxTemplateById(nextConfig.templateId),
+      );
+    }
+    nextConfig.releaseHistory = normalizeImageHistory(nextConfig.releaseHistory, nextConfig.image);
+    nextConfig.publishedTemplates = normalizeDevboxPublishedTemplates(nextConfig.publishedTemplates);
 
     node.devboxConfig = nextConfig;
     node.subtitle = '';
@@ -1423,7 +1509,11 @@
       diskSize: nextConfig.diskSize,
       diskUsed: nextConfig.diskUsed,
       startCommand: nextConfig.startCommand,
+      workingDir: nextConfig.workingDir,
       port: nextConfig.port,
+      image: nextConfig.image,
+      releaseHistory: nextConfig.releaseHistory,
+      publishedTemplates: nextConfig.publishedTemplates,
     };
 
     return node;
@@ -1551,6 +1641,53 @@
     return slugifyText(title.replace(/\b(cluster|data|postgresql|ha)\b/gi, '')) || 'workspace';
   }
 
+  function databaseInternalConnect(node, config) {
+    return String(
+      (config && config.connect) ||
+        (node && node.databaseConfig && node.databaseConfig.connect) ||
+        (node && node.details && node.details.connect) ||
+        databaseConnectString((config && config.flavor) || databaseFlavorFromNode(node)),
+    ).trim();
+  }
+
+  function databasePublicHost(node) {
+    const prefix = slugifyText(inferDatabaseName(node) || (node && node.title) || 'database') || 'database';
+    return `${prefix}-public.db.sealos.run`;
+  }
+
+  function deriveDatabasePublicConnect(node, config, connectValue) {
+    const connect = String(connectValue || databaseInternalConnect(node, config)).trim();
+    if (!connect) {
+      return '';
+    }
+
+    const host = databasePublicHost(node);
+    if (!host) {
+      return connect;
+    }
+
+    if (/@[^/:?#]+(?::\d+)?/.test(connect)) {
+      return connect.replace(/@([^/:?#]+)(:\d+)?/, (_match, _currentHost, port = '') => `@${host}${port}`);
+    }
+
+    return connect;
+  }
+
+  function databasePreviewConfig(node, draft) {
+    const base = { ...((node && node.databaseConfig) || {}) };
+    const hasOwn = (field) => draft && Object.prototype.hasOwnProperty.call(draft, field);
+    const next = {
+      ...base,
+      ...(draft || {}),
+      publicAccess: hasOwn('publicAccess') ? Boolean(draft.publicAccess) : Boolean(base.publicAccess),
+    };
+    const internalConnect = databaseInternalConnect(node, next);
+    next.publicConnect = String(
+      (hasOwn('publicConnect') ? draft.publicConnect : next.publicConnect) || deriveDatabasePublicConnect(node, next, internalConnect),
+    ).trim();
+    return next;
+  }
+
   function defaultDatabaseInstanceName(flavor) {
     const normalized = String(flavor || '').trim().toLowerCase();
 
@@ -1637,6 +1774,8 @@
       backupMinute: String(options.backupMinute || scheduleDefaults.backupMinute),
       backupWeekday: String(options.backupWeekday || scheduleDefaults.backupWeekday),
       backupTarget: String(options.backupTarget || 'OSS / sealai-backup'),
+      publicAccess: Boolean(options.publicAccess),
+      publicConnect: String(options.publicConnect || '').trim(),
     };
   }
 
@@ -1921,11 +2060,16 @@
       ...createDatabaseConfig(flavor, { node }),
       ...(node.databaseConfig || {}),
     };
+    const internalConnect = databaseInternalConnect(node, nextConfig);
+    nextConfig.publicAccess = Boolean(nextConfig.publicAccess);
+    nextConfig.publicConnect = String(nextConfig.publicConnect || deriveDatabasePublicConnect(node, nextConfig, internalConnect)).trim();
 
     node.status = normalizeWorkloadStatus(node.status);
     node.databaseConfig = nextConfig;
     node.details = {
       ...(node.details || {}),
+      connect: internalConnect,
+      publicConnect: nextConfig.publicConnect,
       backup: nextConfig.backupPolicy,
       runtime: `${nextConfig.cpu} CPU / ${nextConfig.memory} RAM`,
       version: nextConfig.version,
@@ -2007,7 +2151,7 @@
       tab: current ? current.tab : 'rows',
       page: current ? current.page || 'browse' : 'browse',
       backupMode: current ? current.backupMode || 'manual' : 'manual',
-      configDraft: current ? { ...current.configDraft } : { ...node.databaseConfig },
+      configDraft: databasePreviewConfig(node, current ? current.configDraft : node.databaseConfig),
       saveState: current ? current.saveState : 'idle',
       error: current ? current.error : '',
       importOpen: current ? current.importOpen : false,
@@ -2153,14 +2297,18 @@
     };
   }
 
-  function openContainerLogsWorkspace(nodeId) {
+  function openNodeLogsWorkspace(nodeId) {
     const node = getNodeById(nodeId);
-    if (!node || node.type !== 'container') {
+    if (!node || !['container', 'database'].includes(node.type)) {
       state.logsView = null;
       return;
     }
 
-    syncContainerNode(node);
+    if (node.type === 'container') {
+      syncContainerNode(node);
+    } else {
+      syncDatabaseNode(node);
+    }
     state.databaseView = null;
     const current = state.logsView;
     const dates = recentLogDates();
@@ -2183,6 +2331,14 @@
     };
   }
 
+  function openContainerLogsWorkspace(nodeId) {
+    openNodeLogsWorkspace(nodeId);
+  }
+
+  function openDatabaseLogsWorkspace(nodeId) {
+    openNodeLogsWorkspace(nodeId);
+  }
+
   function closeLogWorkspace() {
     state.logsView = null;
   }
@@ -2193,19 +2349,25 @@
     }
 
     const node = getNodeById(state.logsView.nodeId);
-    if (!node || node.type !== 'container') {
+    if (!node || !['container', 'database'].includes(node.type)) {
       return null;
     }
 
-    syncContainerNode(node);
+    const isDatabase = node.type === 'database';
+    if (isDatabase) {
+      syncDatabaseNode(node);
+    } else {
+      syncContainerNode(node);
+    }
     const dates = recentLogDates();
-    const containers = state.nodes
-      .filter((item) => item.type === 'container')
-      .map((item) => syncContainerNode(item));
+    const nodes = state.nodes
+      .filter((item) => item.type === node.type)
+      .map((item) => (item.type === 'database' ? syncDatabaseNode(item) : syncContainerNode(item)));
 
     return {
       node,
-      containers,
+      nodes,
+      nodeType: node.type,
       dates,
       view: {
         ...state.logsView,
@@ -2220,7 +2382,7 @@
     };
   }
 
-  function openDevboxContext(nodeId) {
+  function openDevboxContext(nodeId, options = {}) {
     const node = getNodeById(nodeId);
     if (!node || node.type !== 'devbox') {
       state.devboxView = null;
@@ -2229,13 +2391,28 @@
 
     syncDevboxNode(node);
     const current = state.devboxView && state.devboxView.nodeId === nodeId ? state.devboxView : null;
+    const history = normalizeImageHistory(node.devboxConfig.releaseHistory, node.devboxConfig.image);
+    const defaultReleaseId = (history[0] && history[0].id) || '';
+    const page = options.page || 'config';
 
     state.devboxView = {
       nodeId,
-      configDraft: current ? { ...current.configDraft } : { ...node.devboxConfig },
+      configDraft: current ? cloneDevboxConfig(current.configDraft || {}) : cloneDevboxConfig(node.devboxConfig),
       saveState: current ? current.saveState : 'idle',
       error: current ? current.error : '',
       info: current ? current.info : '',
+      page,
+      releaseId:
+        options.releaseId ||
+        (current && current.releaseId && history.some((entry) => entry.id === current.releaseId) ? current.releaseId : defaultReleaseId),
+      releaseDraft:
+        options.releaseDraft !== undefined
+          ? String(options.releaseDraft)
+          : current && current.releaseDraft
+          ? String(current.releaseDraft)
+          : suggestDevboxReleaseTag(node.devboxConfig),
+      releaseInfo: current ? current.releaseInfo || '' : '',
+      releaseError: current ? current.releaseError || '' : '',
     };
   }
 
@@ -2260,6 +2437,212 @@
       devbox: node.devboxConfig,
       view: state.devboxView,
     };
+  }
+
+  function activeDevboxVersionContext() {
+    const context = activeDevboxContext();
+    if (!context || context.view.page !== 'versions') {
+      return null;
+    }
+
+    const history = normalizeImageHistory(context.devbox.releaseHistory, context.devbox.image);
+    const hasRelease = history.some((entry) => entry.id === context.view.releaseId);
+    const releaseId = hasRelease ? context.view.releaseId : (history[0] && history[0].id) || '';
+    const release = history.find((entry) => entry.id === releaseId) || history[0] || null;
+    const templates = normalizeDevboxPublishedTemplates(context.devbox.publishedTemplates);
+
+    context.view.releaseId = release ? release.id : '';
+    if (!String(context.view.releaseDraft || '').trim()) {
+      context.view.releaseDraft = suggestDevboxReleaseTag(context.devbox);
+    }
+
+    return {
+      ...context,
+      template: getDevboxTemplateById(context.devbox.templateId) || resolveDevboxNodeTemplate(context.node),
+      history,
+      release,
+      templates,
+    };
+  }
+
+  function renderDevboxVersionWorkspace(context) {
+    const { node, devbox, view, template, history, release, templates } = context;
+    const draftTag = String(view.releaseDraft || suggestDevboxReleaseTag(devbox)).trim();
+    const statusClass = view.releaseError ? 'error' : view.releaseInfo ? 'saved' : '';
+    const statusText = view.releaseError
+      ? view.releaseError
+      : view.releaseInfo
+      ? view.releaseInfo
+      : '发布版本会生成新的镜像，可复制镜像地址、直接部署，或发布为 Template。';
+
+    return `
+      <div class="db-workspace-header">
+        <div class="db-workspace-copy">
+          <h2 class="db-workspace-title">${escapeHtml(`${cardTitleForNode(node) || node.title} 版本管理`)}</h2>
+          <p class="db-workspace-subtitle">${escapeHtml(
+            [template ? template.name : 'DevBox', devbox.version].filter(Boolean).join(' '),
+          )}</p>
+        </div>
+        <div class="db-workspace-actions">
+          <button type="button" class="db-ghost-button" data-devbox-workspace-action="close-versions">返回画布</button>
+        </div>
+      </div>
+
+      <div class="db-workspace-body devbox-release-body">
+        <aside class="db-nav">
+          <div class="db-nav-label">Releases</div>
+          <section class="devbox-release-publisher">
+            <label class="db-config-label">
+              <span>发布版本号</span>
+              <input
+                class="agui-input"
+                type="text"
+                value="${escapeHtml(draftTag)}"
+                data-devbox-release-field="releaseDraft"
+                placeholder="v1.0.0"
+              />
+            </label>
+            <button type="button" class="db-primary-button" data-devbox-workspace-action="publish-release">发布版本</button>
+          </section>
+
+          <div class="devbox-release-list">
+            ${
+              history.length
+                ? history
+                    .map(
+                      (entry) => `
+                        <button
+                          type="button"
+                          class="devbox-release-item ${release && release.id === entry.id ? 'active' : ''}"
+                          data-devbox-workspace-action="select-release"
+                          data-devbox-release-id="${escapeHtml(entry.id)}"
+                        >
+                          <div class="devbox-release-item-head">
+                            <strong>${escapeHtml(entry.tag || parseImageReference(entry.image).tag)}</strong>
+                            <span>${escapeHtml(entry.createdAt || '')}</span>
+                          </div>
+                          <span>${escapeHtml(entry.note || (entry.status === 'current' ? '当前运行版本' : '历史镜像版本'))}</span>
+                        </button>
+                      `,
+                    )
+                    .join('')
+                : '<div class="agui-empty">当前还没有发布版本。</div>'
+            }
+          </div>
+        </aside>
+
+        <section class="db-main devbox-release-main">
+          <div class="db-main-header">
+            <div>
+              <h3 class="db-main-title">${escapeHtml(
+                release ? release.tag || parseImageReference(release.image).tag : '当前版本',
+              )}</h3>
+              <p class="db-main-subtitle">${escapeHtml(
+                release ? release.note || '当前运行镜像版本' : '发布后会自动生成镜像。',
+              )}</p>
+            </div>
+          </div>
+
+          <div class="db-chip-row">
+            <span class="db-chip">${escapeHtml(compactStatusLabel(node.status) || 'running')}</span>
+            <span class="db-chip">${escapeHtml(`${devbox.workingDir || '/workspace'}`)}</span>
+            <span class="db-chip">${escapeHtml(`${String(devbox.port || DEFAULT_DEPLOY_PORT).replace(/\/tcp$/i, '')}/TCP`)}</span>
+          </div>
+
+          <section class="floating-window-section">
+            <div class="floating-window-section-head">
+              <strong>镜像地址</strong>
+              <span>${escapeHtml(release ? release.createdAt || '' : '')}</span>
+            </div>
+            <div class="image-current-chip">${escapeHtml(release ? release.image : devbox.image || '')}</div>
+            <div class="devbox-release-actions">
+              <button
+                type="button"
+                class="db-ghost-button"
+                data-copy-value="${escapeHtml(release ? release.image : devbox.image || '')}"
+              >
+                复制镜像地址
+              </button>
+              <button
+                type="button"
+                class="db-primary-button"
+                data-devbox-workspace-action="deploy-release"
+                data-devbox-release-id="${escapeHtml(release ? release.id : '')}"
+              >
+                直接部署
+              </button>
+              <button
+                type="button"
+                class="db-ghost-button"
+                data-devbox-workspace-action="publish-template"
+                data-devbox-release-id="${escapeHtml(release ? release.id : '')}"
+              >
+                发布为 Template
+              </button>
+            </div>
+          </section>
+
+          <section class="floating-window-section">
+            <div class="floating-window-section-head">
+              <strong>运行配置</strong>
+              <span>版本发布后可继续用于部署或模板化。</span>
+            </div>
+            <div class="devbox-key-grid compact">
+              <div class="devbox-key-item">
+                <span>启动命令</span>
+                <strong>${escapeHtml(devbox.startCommand || 'sleep infinity')}</strong>
+              </div>
+              <div class="devbox-key-item">
+                <span>工作目录</span>
+                <strong>${escapeHtml(devbox.workingDir || '/workspace')}</strong>
+              </div>
+              <div class="devbox-key-item">
+                <span>监听端口</span>
+                <strong>${escapeHtml(`${String(devbox.port || DEFAULT_DEPLOY_PORT).replace(/\/tcp$/i, '')}/TCP`)}</strong>
+              </div>
+            </div>
+          </section>
+
+          <section class="floating-window-section">
+            <div class="floating-window-section-head">
+              <strong>已发布 Template</strong>
+              <span>发布后可以继续基于该 Template 创建新的开发环境。</span>
+            </div>
+            <div class="devbox-template-publish-list">
+              ${
+                templates.length
+                  ? templates
+                      .map(
+                        (item) => `
+                          <div class="devbox-template-publish-item">
+                            <div class="devbox-template-publish-copy">
+                              <strong>${escapeHtml(item.name)}</strong>
+                              <span>${escapeHtml(item.note || '')}</span>
+                            </div>
+                            <div class="devbox-template-publish-actions">
+                              <button type="button" class="db-ghost-button" data-copy-value="${escapeHtml(item.image)}">复制镜像</button>
+                              <button
+                                type="button"
+                                class="db-primary-button"
+                                data-devbox-workspace-action="create-from-template"
+                                data-devbox-template-id="${escapeHtml(item.id)}"
+                              >
+                                创建开发环境
+                              </button>
+                            </div>
+                          </div>
+                        `,
+                      )
+                      .join('')
+                  : '<div class="agui-empty">当前还没有发布 Template。</div>'
+              }
+            </div>
+          </section>
+
+          <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
+        </section>
+      </div>
+    `;
   }
 
   function inferDatabaseRelations(database) {
@@ -2794,6 +3177,8 @@
       'memory',
       'replicas',
       'storage',
+      'publicAccess',
+      'publicConnect',
       'backupPolicy',
       'backupRetention',
       'backupHour',
@@ -2856,6 +3241,7 @@
       diskSize: String((config && config.diskSize) || '').trim(),
       diskUsed: String((config && config.diskUsed) || '').trim(),
       startCommand: String((config && config.startCommand) || '').trim(),
+      workingDir: String((config && config.workingDir) || '').trim(),
       port: String((config && config.port) || '').trim(),
     });
   }
@@ -2877,6 +3263,8 @@
       memory: String((view.configDraft && view.configDraft.memory) || '').trim(),
       replicas: String((view.configDraft && view.configDraft.replicas) || '').trim(),
       storage: String((view.configDraft && view.configDraft.storage) || '').trim(),
+      publicAccess: Boolean(view.configDraft && view.configDraft.publicAccess),
+      publicConnect: String((view.configDraft && view.configDraft.publicConnect) || '').trim(),
       backupPolicy: normalizeBackupPolicy(String((view.configDraft && view.configDraft.backupPolicy) || '').trim()),
       backupRetention: String((view.configDraft && view.configDraft.backupRetention) || '').trim(),
       backupWindow: String((view.configDraft && view.configDraft.backupWindow) || '').trim(),
@@ -2891,6 +3279,8 @@
       draft.memory || node.databaseConfig.memory,
       draft.instanceSpec || node.databaseConfig.instanceSpec,
     );
+    draft.publicConnect =
+      draft.publicConnect || deriveDatabasePublicConnect(node, { ...node.databaseConfig, ...draft }, databaseInternalConnect(node, draft));
 
     if (!draft.cpu || !draft.memory || !draft.replicas || !draft.storage) {
       state.databaseView.error = '请先补全副本数、CPU、内存和存储。';
@@ -2918,7 +3308,7 @@
 
     addMessage(
       'assistant',
-      `数据库配置已更新：${node.title} ${node.databaseConfig.version} 调整为 ${node.databaseConfig.replicas} 副本，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，存储 ${node.databaseConfig.storage}。`,
+      `数据库配置已更新：${node.title} ${node.databaseConfig.version} 调整为 ${node.databaseConfig.replicas} 副本，${node.databaseConfig.cpu} CPU / ${node.databaseConfig.memory}，存储 ${node.databaseConfig.storage}${node.databaseConfig.publicAccess ? '，外网地址已开启' : ''}。`,
     );
     renderAll();
   }
@@ -3223,7 +3613,8 @@
       diskSize: String((view.configDraft && view.configDraft.diskSize) || '').trim(),
       diskUsed: String((view.configDraft && view.configDraft.diskUsed) || '').trim(),
       startCommand: String((view.configDraft && view.configDraft.startCommand) || '').trim(),
-      port: String((view.configDraft && view.configDraft.port) || '').trim(),
+      workingDir: String((view.configDraft && view.configDraft.workingDir) || '').trim(),
+      port: String((view.configDraft && view.configDraft.port) || '').trim().replace(/\/tcp$/i, ''),
     };
 
     if (!draft.cpu || !draft.memory || !draft.diskSize) {
@@ -3242,18 +3633,250 @@
       usedMemory: estimateUsedMemory(draft.memory),
       diskUsed: estimateUsedDisk(draft.diskSize),
       startCommand: draft.startCommand || defaultDevboxStartCommand(getDevboxTemplateById(node.devboxConfig.templateId), draft.port),
+      workingDir:
+        draft.workingDir || defaultDevboxWorkingDir(getDevboxTemplateById(node.devboxConfig.templateId), node.title),
+      port: draft.port || DEFAULT_DEPLOY_PORT,
     };
     syncDevboxNode(node);
-    state.devboxView.configDraft = { ...node.devboxConfig };
+    state.devboxView.configDraft = cloneDevboxConfig(node.devboxConfig);
     state.devboxView.saveState = 'done';
     state.devboxView.error = '';
-    state.devboxView.info = `${node.devboxConfig.cpu} CPU / ${node.devboxConfig.memory} / ${node.devboxConfig.diskSize}`;
+    state.devboxView.info = `${node.devboxConfig.workingDir} · ${node.devboxConfig.port}/TCP`;
 
     addMessage(
       'assistant',
-      `开发环境配置已更新：${cardTitleForNode(node)} 调整为 ${node.devboxConfig.cpu} CPU / ${node.devboxConfig.memory}，磁盘 ${node.devboxConfig.diskSize}。`,
+      `开发环境配置已更新：${cardTitleForNode(node)} 使用 ${node.devboxConfig.workingDir}，监听 ${node.devboxConfig.port}/TCP。`,
     );
     renderAll();
+  }
+
+  function closeDevboxVersionWorkspace() {
+    if (!state.devboxView) {
+      return;
+    }
+
+    state.devboxView.page = 'config';
+    state.devboxView.releaseError = '';
+    state.devboxView.releaseInfo = '';
+  }
+
+  function applyDevboxReleaseHistory(node, nextImage, actionLabel = 'Published') {
+    if (!node || node.type !== 'devbox') {
+      return null;
+    }
+
+    syncDevboxNode(node);
+    const devbox = node.devboxConfig || {};
+    const currentImage = String(devbox.image || '').trim();
+    const history = normalizeImageHistory(devbox.releaseHistory, currentImage);
+    const next = String(nextImage || '').trim();
+    if (!next) {
+      return null;
+    }
+
+    const remaining = history.filter((entry) => entry.image !== next && entry.image !== currentImage);
+    const nextParsed = parseImageReference(next);
+    const updatedHistory = [
+      {
+        id: createId('imgver'),
+        image: next,
+        tag: nextParsed.tag,
+        createdAt: '刚刚',
+        status: 'current',
+        note: actionLabel,
+      },
+      ...(currentImage && currentImage !== next
+        ? [
+            {
+              id: createId('imgver'),
+              image: currentImage,
+              tag: parseImageReference(currentImage).tag,
+              createdAt: '刚刚',
+              status: 'history',
+              note: 'Previous current',
+            },
+          ]
+        : []),
+      ...remaining,
+    ].slice(0, 12);
+
+    node.devboxConfig = {
+      ...node.devboxConfig,
+      image: next,
+      releaseHistory: normalizeImageHistory(updatedHistory, next),
+    };
+    node.details = {
+      ...(node.details || {}),
+      image: next,
+      releaseHistory: normalizeImageHistory(updatedHistory, next),
+    };
+    syncDevboxNode(node);
+    return node.devboxConfig.releaseHistory[0] || null;
+  }
+
+  function runDevboxStartCommand() {
+    const context = activeDevboxContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, view } = context;
+    const draft = {
+      ...(view.configDraft || {}),
+      startCommand: String((view.configDraft && view.configDraft.startCommand) || '').trim(),
+      workingDir: String((view.configDraft && view.configDraft.workingDir) || '').trim(),
+      port: String((view.configDraft && view.configDraft.port) || '').trim().replace(/\/tcp$/i, ''),
+    };
+
+    if (!draft.startCommand || !draft.workingDir || !draft.port) {
+      state.devboxView.error = '请先填写启动命令、工作目录和监听端口。';
+      state.devboxView.info = '';
+      renderAll();
+      return;
+    }
+
+    node.status = 'running';
+    node.devboxConfig = {
+      ...node.devboxConfig,
+      ...draft,
+    };
+    syncDevboxNode(node);
+    state.devboxView.configDraft = cloneDevboxConfig(node.devboxConfig);
+    state.devboxView.saveState = 'done';
+    state.devboxView.error = '';
+    state.devboxView.info = `已在 ${node.devboxConfig.workingDir} 执行 ${node.devboxConfig.startCommand}`;
+    renderAll();
+  }
+
+  function publishDevboxRelease() {
+    const context = activeDevboxVersionContext();
+    if (!context) {
+      return;
+    }
+
+    const { node, view, devbox, template } = context;
+    const nextTag = String(view.releaseDraft || '').trim().replace(/\s+/g, '-');
+    if (!nextTag) {
+      view.releaseError = '请先填写版本号。';
+      view.releaseInfo = '';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    const repository =
+      parseImageReference(devbox.image || defaultDevboxImage({ title: node.title, templateId: devbox.templateId, version: devbox.version }, template))
+        .repository || defaultDevboxImage({ title: node.title, templateId: devbox.templateId, version: devbox.version }, template);
+    const nextImage = `${repository}:${nextTag}`;
+    const current = applyDevboxReleaseHistory(node, nextImage, `Release ${nextTag}`);
+    if (!current) {
+      view.releaseError = '版本发布失败，请稍后重试。';
+      view.releaseInfo = '';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    view.releaseId = current.id;
+    view.releaseDraft = suggestDevboxReleaseTag(node.devboxConfig);
+    view.releaseError = '';
+    view.releaseInfo = `已发布 ${nextTag}，并生成镜像 ${nextImage}`;
+    if (state.devboxView) {
+      state.devboxView.configDraft = cloneDevboxConfig(node.devboxConfig);
+      state.devboxView.info = view.releaseInfo;
+      state.devboxView.error = '';
+    }
+    renderAll();
+  }
+
+  function deployDevboxReleaseFromWorkspace(releaseId) {
+    const context = activeDevboxVersionContext();
+    if (!context) {
+      return;
+    }
+
+    const target = context.history.find((entry) => entry.id === releaseId) || context.release;
+    if (!target) {
+      context.view.releaseError = '未找到可部署的镜像版本。';
+      context.view.releaseInfo = '';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    context.view.releaseError = '';
+    context.view.releaseInfo = `已将 ${target.tag} 填入 Docker Deploy。`;
+    openDockerDeployUi({
+      alwaysNew: true,
+      image: target.image,
+      port: String(context.devbox.port || DEFAULT_DEPLOY_PORT).replace(/\/tcp$/i, ''),
+      note: `${cardTitleForNode(context.node) || context.node.title} 版本 ${target.tag} 已载入`,
+    });
+    renderCanvasWorkspace();
+  }
+
+  function publishDevboxTemplateFromWorkspace(releaseId) {
+    const context = activeDevboxVersionContext();
+    if (!context) {
+      return;
+    }
+
+    const target = context.history.find((entry) => entry.id === releaseId) || context.release;
+    if (!target) {
+      context.view.releaseError = '未找到可发布的版本。';
+      context.view.releaseInfo = '';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    const nextTemplate = {
+      id: createId('tmpl'),
+      name: `${cardTitleForNode(context.node) || context.node.title} ${target.tag}`,
+      image: target.image,
+      templateId: context.devbox.templateId,
+      version: target.tag,
+      createdAt: '刚刚',
+      note: '可基于该 Template 创建新的开发环境',
+    };
+    const existing = normalizeDevboxPublishedTemplates(context.devbox.publishedTemplates).filter(
+      (item) => item.image !== target.image,
+    );
+
+    context.node.devboxConfig = {
+      ...context.node.devboxConfig,
+      publishedTemplates: [nextTemplate, ...existing].slice(0, 8),
+    };
+    syncDevboxNode(context.node);
+    if (state.devboxView) {
+      state.devboxView.configDraft = cloneDevboxConfig(context.node.devboxConfig);
+      state.devboxView.info = `已将 ${target.tag} 发布为 Template`;
+      state.devboxView.error = '';
+    }
+    context.view.releaseError = '';
+    context.view.releaseInfo = `已将 ${target.tag} 发布为 Template`;
+    renderAll();
+  }
+
+  function createDevboxFromPublishedTemplate(templateId) {
+    const context = activeDevboxVersionContext();
+    if (!context) {
+      return;
+    }
+
+    const template = context.templates.find((item) => item.id === templateId);
+    if (!template) {
+      context.view.releaseError = '未找到可创建的 Template。';
+      context.view.releaseInfo = '';
+      renderCanvasWorkspace();
+      return;
+    }
+
+    context.view.releaseError = '';
+    context.view.releaseInfo = `已载入 Template ${template.name}`;
+    openDevboxDeployUi({
+      alwaysNew: true,
+      templateId: template.templateId,
+      version: template.version,
+      note: `已基于 ${template.name} 预填开发环境模板`,
+    });
+    renderCanvasWorkspace();
   }
 
   function maskConnectionString(value) {
@@ -3338,6 +3961,16 @@
     input.select();
     document.execCommand('copy');
     document.body.removeChild(input);
+  }
+
+  function maybeCopyValueFromTarget(target) {
+    const trigger = target && target.closest ? target.closest('[data-copy-value], [data-node-copy]') : null;
+    if (!trigger) {
+      return false;
+    }
+
+    copyToClipboard(trigger.dataset.copyValue || trigger.dataset.nodeCopy || '');
+    return true;
   }
 
   function renderContainerMeter(label, used, total, options = {}) {
@@ -3478,6 +4111,68 @@
     };
   }
 
+  function buildDatabaseMetricsPayload(node) {
+    syncDatabaseNode(node);
+    const config = node.databaseConfig || {};
+    const flavor = String(config.flavor || databaseFlavorFromNode(node) || 'PostgreSQL').trim();
+    const version = String(config.version || defaultDatabaseVersion(flavor)).trim();
+    const cpuUsed = String(config.usedCpu || estimateUsedCpu(config.cpu || '2')).trim();
+    const cpuTotal = String(config.cpu || '2').trim();
+    const memoryUsed = String(config.usedMemory || estimateUsedMemory(config.memory || '4Gi')).trim();
+    const memoryTotal = String(config.memory || '4Gi').trim();
+    const diskTotal = String(config.storage || '100Gi').trim();
+    const diskUsed = String(config.usedStorage || estimateUsedDisk(diskTotal)).trim();
+    const diskPercent = resourceUsagePercent(diskUsed, diskTotal, 'capacity');
+
+    return {
+      nodeId: node.id,
+      engine: [flavor, version].filter(Boolean).join(' '),
+      windowLabel: '最近 60 分钟',
+      cpu: metricSnapshot(cpuUsed, cpuTotal, 'cpu', `${node.id}:db:cpu:${flavor}`),
+      memory: metricSnapshot(memoryUsed, memoryTotal, 'capacity', `${node.id}:db:memory:${flavor}`),
+      disk: {
+        mounted: true,
+        used: diskUsed,
+        total: diskTotal,
+        percent: diskPercent,
+        mountPath: '/var/lib/data',
+      },
+    };
+  }
+
+  function buildDevboxMetricsPayload(node) {
+    syncDevboxNode(node);
+    const config = node.devboxConfig || {};
+    const template = getDevboxTemplateById(config.templateId) || resolveDevboxNodeTemplate(node);
+    const cpuUsed = String(config.usedCpu || estimateUsedCpu(config.quotaCpu || config.cpu || '2')).trim();
+    const cpuTotal = String(config.quotaCpu || config.cpu || '2').trim();
+    const memoryUsed = String(config.usedMemory || estimateUsedMemory(config.quotaMemory || config.memory || '4Gi')).trim();
+    const memoryTotal = String(config.quotaMemory || config.memory || '4Gi').trim();
+    const diskTotal = String(config.diskSize || '50Gi').trim();
+    const diskUsed = String(config.diskUsed || estimateUsedDisk(diskTotal)).trim();
+    const diskPercent = resourceUsagePercent(diskUsed, diskTotal, 'capacity');
+
+    return {
+      nodeId: node.id,
+      runtime: [template ? template.name : 'DevBox', config.version].filter(Boolean).join(' '),
+      windowLabel: '最近 60 分钟',
+      cpu: metricSnapshot(cpuUsed, cpuTotal, 'cpu', `${node.id}:devbox:cpu:${config.templateId || 'nodejs'}`),
+      memory: metricSnapshot(
+        memoryUsed,
+        memoryTotal,
+        'capacity',
+        `${node.id}:devbox:memory:${config.templateId || 'nodejs'}`,
+      ),
+      disk: {
+        mounted: true,
+        used: diskUsed,
+        total: diskTotal,
+        percent: diskPercent,
+        mountPath: String(config.workingDir || '/workspace').trim(),
+      },
+    };
+  }
+
   function buildContainerLogsPayload(node) {
     syncContainerNode(node);
     const container = node.containerConfig || {};
@@ -3492,6 +4187,26 @@
         `12:41:18 INFO endpoint start.sh listening on 0.0.0.0:${port}`,
         '12:41:25 INFO readiness probe passed',
         '12:41:31 INFO traffic accepted from workspace ingress',
+      ],
+    };
+  }
+
+  function buildDatabaseLogsPayload(node) {
+    syncDatabaseNode(node);
+    const config = node.databaseConfig || {};
+    const flavor = String(config.flavor || databaseFlavorFromNode(node) || 'PostgreSQL').trim();
+    const version = String(config.version || defaultDatabaseVersion(flavor)).trim();
+    const connect = databaseInternalConnect(node, config);
+    const maskedConnect = maskConnectionString(connect);
+
+    return {
+      nodeId: node.id,
+      lines: [
+        `09:18:11 INFO ${flavor.toLowerCase()} runtime boot ${version}`,
+        `09:18:14 INFO listening on ${maskedConnect}`,
+        `09:18:18 INFO replicas ${config.replicas || '2'} / storage ${config.storage || '100Gi'}`,
+        '09:18:21 INFO checkpoint completed successfully',
+        '09:18:32 INFO client sessions within healthy range',
       ],
     };
   }
@@ -3618,6 +4333,85 @@
     });
   }
 
+  function buildDatabaseLogEntries(node) {
+    syncDatabaseNode(node);
+    const config = node.databaseConfig || {};
+    const status = compactStatusLabel(node.status) || 'running';
+    const flavor = String(config.flavor || databaseFlavorFromNode(node) || 'PostgreSQL').trim();
+    const version = String(config.version || defaultDatabaseVersion(flavor)).trim();
+    const replicas = String(config.replicas || '2').trim();
+    const storage = String(config.storage || '100Gi').trim();
+    const displayName = cardTitleForNode(node) || node.title || 'database';
+    const connect = maskConnectionString(databaseInternalConnect(node, config));
+    const dateOptions = recentLogDates(4);
+    const timeSets = [
+      ['09:12:04', '09:12:08', '09:12:10', '09:12:15', '09:14:37', '09:18:02', '09:24:17'],
+      ['16:41:12', '16:41:16', '16:41:20', '16:41:26', '16:42:08', '16:45:49', '16:48:33'],
+      ['11:08:02', '11:08:08', '11:08:11', '11:08:21', '11:11:05', '11:14:41', '11:18:26'],
+      ['07:34:44', '07:34:49', '07:34:53', '07:35:01', '07:37:22', '07:41:10', '07:45:56'],
+    ];
+    const templatesByStatus = {
+      running: [
+        { level: 'INFO', stream: 'runtime', message: `${flavor} ${version} instance booted` },
+        { level: 'INFO', stream: 'network', message: `accepting connections on ${connect}` },
+        { level: 'INFO', stream: 'storage', message: `storage quota ${storage} mounted` },
+        { level: 'INFO', stream: 'replica', message: `${replicas} replicas healthy` },
+        { level: 'INFO', stream: 'checkpoint', message: 'checkpoint completed successfully' },
+        { level: 'INFO', stream: 'session', message: `${displayName} session count within threshold` },
+        { level: 'INFO', stream: 'probe', message: 'readiness probe passed' },
+      ],
+      starting: [
+        { level: 'INFO', stream: 'runtime', message: `starting ${flavor} ${version}` },
+        { level: 'INFO', stream: 'storage', message: `attaching ${storage} volume` },
+        { level: 'INFO', stream: 'replica', message: `initializing ${replicas} replicas` },
+        { level: 'WARN', stream: 'probe', message: 'startup probe pending' },
+        { level: 'WARN', stream: 'session', message: 'connections temporarily gated until warmup completes' },
+        { level: 'INFO', stream: 'checkpoint', message: 'recovery replay in progress' },
+        { level: 'INFO', stream: 'probe', message: 'waiting for readiness confirmation' },
+      ],
+      stopping: [
+        { level: 'INFO', stream: 'runtime', message: `received stop signal for ${displayName}` },
+        { level: 'INFO', stream: 'session', message: 'draining active sessions' },
+        { level: 'WARN', stream: 'probe', message: 'readiness probe disabled during shutdown' },
+        { level: 'INFO', stream: 'checkpoint', message: 'final checkpoint requested' },
+        { level: 'INFO', stream: 'replica', message: 'replicas entering shutdown state' },
+        { level: 'INFO', stream: 'storage', message: 'flushing buffer cache to disk' },
+        { level: 'INFO', stream: 'runtime', message: 'database shutdown sequence in progress' },
+      ],
+      stopped: [
+        { level: 'INFO', stream: 'runtime', message: `${displayName} stopped` },
+        { level: 'INFO', stream: 'runtime', message: 'last shutdown completed cleanly' },
+        { level: 'INFO', stream: 'storage', message: `${storage} volume retained` },
+        { level: 'INFO', stream: 'session', message: 'no active client sessions' },
+        { level: 'INFO', stream: 'replica', message: 'replication paused' },
+        { level: 'INFO', stream: 'checkpoint', message: 'latest checkpoint metadata retained' },
+        { level: 'INFO', stream: 'runtime', message: `${flavor} binaries remain cached for next start` },
+      ],
+      unhealthy: [
+        { level: 'INFO', stream: 'runtime', message: `${flavor} ${version} instance booted` },
+        { level: 'WARN', stream: 'probe', message: 'readiness probe degraded' },
+        { level: 'ERROR', stream: 'session', message: 'replica lag exceeded threshold' },
+        { level: 'WARN', stream: 'storage', message: 'checkpoint duration exceeds baseline' },
+        { level: 'ERROR', stream: 'replica', message: 'one replica connection lost' },
+        { level: 'WARN', stream: 'runtime', message: 'database entered degraded mode' },
+        { level: 'ERROR', stream: 'probe', message: 'health check failed, marked unhealthy' },
+      ],
+    };
+    const templates = templatesByStatus[status] || templatesByStatus.running;
+
+    return dateOptions.flatMap((date, dayIndex) => {
+      const times = timeSets[dayIndex] || timeSets[timeSets.length - 1];
+      return templates.map((entry, lineIndex) => ({
+        id: `${node.id}-${date}-${lineIndex}`,
+        date,
+        time: times[lineIndex] || times[times.length - 1],
+        level: entry.level,
+        stream: entry.stream,
+        message: entry.message,
+      }));
+    });
+  }
+
   function logEntryTimestamp(entry) {
     const date = String((entry && entry.date) || '').trim();
     const time = String((entry && entry.time) || '').trim() || '00:00:00';
@@ -3674,6 +4468,55 @@
     };
   }
 
+  function filteredLogEntries(node, view) {
+    const dates = recentLogDates(4);
+    const mode = view && view.mode === 'history' ? 'history' : 'realtime';
+    const rawSearch = String((view && view.search) || '');
+    const query = rawSearch.trim().toLowerCase();
+    const historyPreset =
+      mode === 'history' && ['10m', '1h', '1d', 'range'].includes(String((view && view.historyPreset) || ''))
+        ? String(view.historyPreset)
+        : '10m';
+    const rangeStart =
+      mode === 'history' && dates.includes(String((view && view.rangeStart) || ''))
+        ? String(view.rangeStart)
+        : dates[Math.min(1, dates.length - 1)];
+    const rangeEnd =
+      mode === 'history' && dates.includes(String((view && view.rangeEnd) || '')) ? String(view.rangeEnd) : dates[0];
+    const allEntries = node && node.type === 'database' ? buildDatabaseLogEntries(node) : buildContainerLogEntries(node);
+    const latestTimestamp = allEntries.reduce((max, entry) => Math.max(max, logEntryTimestamp(entry)), 0);
+    const scopedEntries =
+      mode === 'realtime'
+        ? allEntries.filter((entry) => entry.date === dates[0])
+        : historyPreset === '10m'
+        ? allEntries.filter((entry) => latestTimestamp - logEntryTimestamp(entry) <= 10 * 60 * 1000)
+        : historyPreset === '1h'
+        ? allEntries.filter((entry) => latestTimestamp - logEntryTimestamp(entry) <= 60 * 60 * 1000)
+        : historyPreset === '1d'
+        ? allEntries.filter((entry) => latestTimestamp - logEntryTimestamp(entry) <= 24 * 60 * 60 * 1000)
+        : allEntries.filter((entry) => {
+            const lower = rangeStart <= rangeEnd ? rangeStart : rangeEnd;
+            const upper = rangeStart <= rangeEnd ? rangeEnd : rangeStart;
+            return entry.date >= lower && entry.date <= upper;
+          });
+    const filteredEntries = query
+      ? scopedEntries.filter((entry) =>
+          [entry.time, entry.level, entry.stream, entry.message].join(' ').toLowerCase().includes(query),
+        )
+      : scopedEntries;
+
+    return {
+      mode,
+      dates,
+      search: rawSearch,
+      historyPreset,
+      rangeStart,
+      rangeEnd,
+      entries: filteredEntries,
+      totalLines: scopedEntries.length,
+    };
+  }
+
   function downloadTextFile(filename, text) {
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
@@ -3693,8 +4536,8 @@
     }
 
     const { node, view } = context;
-    const { entries, historyPreset, mode, rangeStart, rangeEnd } = filteredContainerLogEntries(node, view);
-    const baseName = slugifyText(cardTitleForNode(node) || node.title || 'container');
+    const { entries, historyPreset, mode, rangeStart, rangeEnd } = filteredLogEntries(node, view);
+    const baseName = slugifyText(cardTitleForNode(node) || node.title || node.type || 'logs');
     const filename =
       mode === 'realtime'
         ? `${baseName}-realtime.log`
@@ -3783,6 +4626,28 @@
     });
   }
 
+  function openDatabaseTerminalWindow(node) {
+    if (!node || node.type !== 'database') {
+      return;
+    }
+
+    openWindowModal({
+      type: 'terminal',
+      nodeId: node.id,
+    });
+  }
+
+  function openDevboxTerminalWindow(node) {
+    if (!node || node.type !== 'devbox') {
+      return;
+    }
+
+    openWindowModal({
+      type: 'terminal',
+      nodeId: node.id,
+    });
+  }
+
   function openContainerImageManager(node) {
     if (!node || node.type !== 'container') {
       return;
@@ -3843,7 +4708,7 @@
       closeEntryContext();
       closeDevboxContext();
       openContainerContext(node.id);
-      openContainerLogsWorkspace(node.id);
+      openNodeLogsWorkspace(node.id);
       renderAll();
       return;
     }
@@ -3877,6 +4742,86 @@
       kind: 'agui',
       ui,
       payload,
+    });
+    renderAll();
+  }
+
+  function openDatabaseActionMessage(node, action) {
+    if (!node || node.type !== 'database') {
+      return;
+    }
+
+    if (action === 'terminal') {
+      openDatabaseTerminalWindow(node);
+      return;
+    }
+
+    if (action === 'log') {
+      state.selectedNodeId = node.id;
+      state.hoveredEdgeId = null;
+      state.selectedEdgeId = null;
+      closeProjectListView();
+      closeContainerContext();
+      closeEntryContext();
+      closeDevboxContext();
+      openNodeLogsWorkspace(node.id);
+      renderAll();
+      return;
+    }
+
+    state.selectedNodeId = node.id;
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
+    closeProjectListView();
+    clearNodeSideContexts();
+
+    const ui = { metrics: 'database-metrics' }[action] || 'database-metrics';
+    const payload = buildDatabaseMetricsPayload(node);
+
+    state.messages.push({
+      id: createId('msg'),
+      role: 'assistant',
+      kind: 'agui',
+      ui,
+      payload,
+    });
+    renderAll();
+  }
+
+  function openDevboxActionMessage(node, action) {
+    if (!node || node.type !== 'devbox') {
+      return;
+    }
+
+    if (action === 'terminal') {
+      openDevboxTerminalWindow(node);
+      return;
+    }
+
+    state.selectedNodeId = node.id;
+    state.hoveredEdgeId = null;
+    state.selectedEdgeId = null;
+    closeProjectListView();
+    closeDatabaseWorkspace();
+    closeLogWorkspace();
+    closeEntryContext();
+    closeContainerContext();
+    openDevboxContext(node.id, {
+      page: action === 'version-manager' ? 'versions' : 'config',
+    });
+
+    if (action === 'version-manager') {
+      pushNodeConfigMessage(node);
+      renderAll();
+      return;
+    }
+
+    state.messages.push({
+      id: createId('msg'),
+      role: 'assistant',
+      kind: 'agui',
+      ui: 'devbox-metrics',
+      payload: buildDevboxMetricsPayload(node),
     });
     renderAll();
   }
@@ -4056,6 +5001,69 @@
     return Boolean(card && card.dataset.configMessageId === state.activeConfigMessageId);
   }
 
+  function applyDatabaseConfigDraftField(field, nextValue) {
+    if (!state.databaseView) {
+      return false;
+    }
+
+    state.databaseView.configDraft[field] = field === 'publicAccess' ? Boolean(nextValue) : nextValue;
+    state.databaseView.saveState = 'editing';
+    state.databaseView.error = '';
+
+    if (field === 'publicAccess') {
+      const node = state.databaseView.nodeId ? getNodeById(state.databaseView.nodeId) : null;
+      state.databaseView.configDraft.publicConnect =
+        state.databaseView.configDraft.publicConnect ||
+        deriveDatabasePublicConnect(
+          node,
+          { ...((node && node.databaseConfig) || {}), ...state.databaseView.configDraft },
+          databaseInternalConnect(node, state.databaseView.configDraft),
+        );
+    }
+
+    if (field === 'instanceSpec') {
+      const profile = databaseSpecProfile(nextValue);
+      state.databaseView.configDraft.cpu = profile.cpu;
+      state.databaseView.configDraft.memory = profile.memory;
+    }
+
+    if (field === 'cpu' || field === 'memory') {
+      state.databaseView.configDraft.instanceSpec = resolveDatabaseInstanceSpec(
+        state.databaseView.configDraft.flavor ||
+          (state.databaseView.nodeId && getNodeById(state.databaseView.nodeId).databaseConfig.flavor) ||
+          'PostgreSQL',
+        field === 'cpu' ? nextValue : state.databaseView.configDraft.cpu,
+        field === 'memory' ? nextValue : state.databaseView.configDraft.memory,
+        state.databaseView.configDraft.instanceSpec,
+      );
+    }
+
+    return true;
+  }
+
+  function setDatabasePublicAccess(node, enabled) {
+    if (!node || node.type !== 'database') {
+      return;
+    }
+
+    node.databaseConfig = {
+      ...(node.databaseConfig || {}),
+      publicAccess: Boolean(enabled),
+      publicConnect: deriveDatabasePublicConnect(node, node.databaseConfig, databaseInternalConnect(node, node.databaseConfig)),
+    };
+    syncDatabaseNode(node);
+
+    if (state.databaseView && state.databaseView.nodeId === node.id) {
+      state.databaseView.configDraft = {
+        ...(state.databaseView.configDraft || {}),
+        publicAccess: node.databaseConfig.publicAccess,
+        publicConnect: node.databaseConfig.publicConnect,
+      };
+      state.databaseView.error = '';
+      state.databaseView.saveState = databaseConfigChanged(node, state.databaseView.configDraft) ? 'editing' : 'done';
+    }
+  }
+
   function updateDatabaseConfigDraftFromChat(target) {
     if (!isActiveConfigMessageTarget(target)) {
       return false;
@@ -4067,31 +5075,12 @@
     }
 
     const field = input.dataset.dbConfigField;
-    let nextValue = input.value;
+    let nextValue = input.type === 'checkbox' ? input.checked : input.value;
     if (input.type === 'range') {
       nextValue = databaseSliderValue(field, input.value);
     }
 
-    state.databaseView.configDraft[field] = nextValue;
-    state.databaseView.saveState = 'editing';
-    state.databaseView.error = '';
-
-    if (field === 'instanceSpec') {
-      const profile = databaseSpecProfile(nextValue);
-      state.databaseView.configDraft.cpu = profile.cpu;
-      state.databaseView.configDraft.memory = profile.memory;
-    }
-
-    if (field === 'cpu' || field === 'memory') {
-      state.databaseView.configDraft.instanceSpec = resolveDatabaseInstanceSpec(
-        state.databaseView.configDraft.flavor || (state.databaseView.nodeId && getNodeById(state.databaseView.nodeId).databaseConfig.flavor) || 'PostgreSQL',
-        field === 'cpu' ? nextValue : state.databaseView.configDraft.cpu,
-        field === 'memory' ? nextValue : state.databaseView.configDraft.memory,
-        state.databaseView.configDraft.instanceSpec,
-      );
-    }
-
-    return true;
+    return applyDatabaseConfigDraftField(field, nextValue);
   }
 
   function updateContainerConfigDraftFromChat(target) {
@@ -4401,6 +5390,7 @@
             diskSize: '50Gi',
             diskUsed: '18Gi',
             startCommand: 'pnpm dev --host 0.0.0.0 --port 3000',
+            workingDir: '/workspace/alice',
             port: '3000/TCP',
           },
           operations: ['复制连接地址', '重启环境', '挂载仓库'],
@@ -4513,6 +5503,7 @@
             diskSize: '40Gi',
             diskUsed: '9Gi',
             startCommand: 'pnpm dev --host 0.0.0.0 --port 3000',
+            workingDir: '/workspace/mika',
             port: '3000/TCP',
           },
           operations: ['启动环境', '查看模板', '挂载仓库'],
@@ -5120,9 +6111,73 @@
     ];
   }
 
+  function buildDatabaseTerminalLines(node) {
+    syncDatabaseNode(node);
+    const config = node.databaseConfig || {};
+    const flavor = String(config.flavor || databaseFlavorFromNode(node) || 'PostgreSQL').trim();
+    const version = String(config.version || defaultDatabaseVersion(flavor)).trim();
+    const connect = databaseInternalConnect(node, config);
+    const maskedConnect = maskConnectionString(connect);
+    const cli =
+      flavor === 'MySQL'
+        ? 'mysql -h mysql.internal -u admin -p'
+        : flavor === 'Redis'
+        ? 'redis-cli -h redis.internal -a ******'
+        : flavor === 'MongoDB'
+        ? 'mongosh mongodb://admin:******@mongo.internal:27017/app'
+        : `psql '${connect.replace(/••••/g, '******')}'`;
+
+    return [
+      `sealai@${cardTitleForNode(node) || node.title}:/var/lib/data$ /bin/sh`,
+      `Using ${flavor} ${version}`,
+      `Connect ${maskedConnect}`,
+      `Replicas ${config.replicas || '2'} · ${config.cpu || '2'} CPU / ${config.memory || '4Gi'}`,
+      `sealai@${cardTitleForNode(node) || node.title}:/var/lib/data$ ${cli}`,
+      '[ready] instance is accepting connections',
+      '[ready] checkpoints and replication are healthy',
+      '█',
+    ];
+  }
+
+  function buildDevboxTerminalLines(node) {
+    syncDevboxNode(node);
+    const config = node.devboxConfig || {};
+    const template = getDevboxTemplateById(config.templateId) || resolveDevboxNodeTemplate(node);
+    const title = cardTitleForNode(node) || node.title;
+    const workingDir = String(config.workingDir || '/workspace').trim();
+    const port = String(config.port || DEFAULT_DEPLOY_PORT).trim().replace(/\/tcp$/i, '');
+    const access = String((node.details && node.details.access) || '').trim();
+
+    return [
+      `sealai@${title}:${workingDir}$ /bin/sh`,
+      `Template ${[template ? template.name : 'DevBox', config.version].filter(Boolean).join(' ')}`,
+      `Working dir ${workingDir}`,
+      `Port ${port}/TCP`,
+      `sealai@${title}:${workingDir}$ ${config.startCommand || 'sleep infinity'}`,
+      '[ready] workspace runtime is attached',
+      access ? `[ready] service exposed at ${access}` : '[ready] listener is active',
+      '█',
+    ];
+  }
+
   function renderTerminalWindow(node) {
-    const container = node.containerConfig || syncContainerNode(node).containerConfig;
-    const lines = buildContainerTerminalLines(node);
+    const isDatabase = node && node.type === 'database';
+    const isDevbox = node && node.type === 'devbox';
+    const lines = isDatabase
+      ? buildDatabaseTerminalLines(node)
+      : isDevbox
+      ? buildDevboxTerminalLines(node)
+      : buildContainerTerminalLines(node);
+    const metaText = isDatabase
+      ? databaseDisplayMeta(node, syncDatabaseNode(node).databaseConfig)
+      : isDevbox
+      ? `${(
+          getDevboxTemplateById((node.devboxConfig || syncDevboxNode(node).devboxConfig).templateId) ||
+          resolveDevboxNodeTemplate(node) || { name: 'DevBox' }
+        ).name} · ${(
+          (node.devboxConfig || syncDevboxNode(node).devboxConfig).workingDir || '/workspace'
+        )}`
+      : (node.containerConfig || syncContainerNode(node).containerConfig).image || DEFAULT_DEPLOY_IMAGE;
 
     return `
       <div class="floating-window floating-terminal-window" role="dialog" aria-modal="true" aria-labelledby="windowTitle">
@@ -5143,7 +6198,7 @@
           <span class="terminal-window-dot red"></span>
           <span class="terminal-window-dot yellow"></span>
           <span class="terminal-window-dot green"></span>
-          <span class="terminal-window-meta">${escapeHtml(container.image || DEFAULT_DEPLOY_IMAGE)}</span>
+          <span class="terminal-window-meta">${escapeHtml(metaText || DEFAULT_DEPLOY_IMAGE)}</span>
         </div>
 
         <div class="terminal-window-screen">
@@ -5257,7 +6312,7 @@
 
     const modal = state.windowModal;
     const node = getNodeById(modal.nodeId);
-    if (!node || node.type !== 'container') {
+    if (!node || !['container', 'database', 'devbox'].includes(node.type)) {
       closeWindowModal();
       return;
     }
@@ -5533,28 +6588,68 @@
       const databaseCard =
         node.type === 'database'
           ? `
-              <div class="node-database-meters">
-                ${renderContainerMeter('CPU', databaseConfig.usedCpu || estimateUsedCpu(databaseConfig.cpu), databaseConfig.cpu, { kind: 'cpu' })}
-                ${renderContainerMeter('内存', databaseConfig.usedMemory || estimateUsedMemory(databaseConfig.memory), databaseConfig.memory)}
-                ${renderContainerMeter('磁盘', databaseConfig.usedStorage || estimateUsedDisk(databaseConfig.storage), databaseConfig.storage, {
-                  kind: 'capacity',
-                  icon: 'storage',
-                })}
-              </div>
-              <div class="node-db-connect">
-                <span class="node-container-label">连接地址</span>
-                <div class="node-db-connect-row">
-                  <span class="node-db-connect-value">${escapeHtml(maskConnectionString((node.details && node.details.connect) || ''))}</span>
+              <div class="node-db-connect-inline">
+                <div class="node-db-connect-inline-head">
+                  <span class="node-container-label">内网地址</span>
+                  <button
+                    type="button"
+                    class="node-inline-action node-db-access-toggle ${databaseConfig.publicAccess ? 'is-on' : ''}"
+                    data-node-db-public-toggle="true"
+                    data-node-control="true"
+                  >开启外网</button>
+                </div>
+                <div class="node-db-connect-inline-main">
+                  <span class="node-db-connect-inline-value">${escapeHtml(maskConnectionString(databaseInternalConnect(node, databaseConfig)))}</span>
                   <span
-                    class="node-inline-action"
+                    class="node-db-inline-copy material-symbols-outlined"
                     role="button"
                     tabindex="-1"
-                    data-node-copy="${escapeHtml((node.details && node.details.connect) || '')}"
-                    title="复制连接地址"
-                  >
-                    复制
-                  </span>
+                    data-node-copy="${escapeHtml(databaseInternalConnect(node, databaseConfig))}"
+                    title="复制内网地址"
+                  >content_copy</span>
                 </div>
+              </div>
+              ${
+                databaseConfig.publicAccess
+                  ? `
+                      <div class="node-db-connect-inline">
+                        <span class="node-container-label">外网地址</span>
+                        <div class="node-db-connect-inline-main">
+                          <span class="node-db-connect-inline-value">${escapeHtml(maskConnectionString(databaseConfig.publicConnect || deriveDatabasePublicConnect(node, databaseConfig, databaseInternalConnect(node, databaseConfig))))}</span>
+                          <span
+                            class="node-db-inline-copy material-symbols-outlined"
+                            role="button"
+                            tabindex="-1"
+                            data-node-copy="${escapeHtml(databaseConfig.publicConnect || deriveDatabasePublicConnect(node, databaseConfig, databaseInternalConnect(node, databaseConfig)))}"
+                            title="复制外网地址"
+                          >content_copy</span>
+                        </div>
+                      </div>
+                    `
+                  : ''
+              }
+              <div class="node-container-tools node-tool-row-3">
+                ${[
+                  { action: 'metrics', icon: 'monitoring', label: 'Metrics' },
+                  { action: 'terminal', icon: 'terminal', label: 'Terminal' },
+                  { action: 'log', icon: 'article', label: 'Log' },
+                ]
+                  .map(
+                    (tool) => `
+                      <span
+                        class="node-container-tool"
+                        role="button"
+                        tabindex="-1"
+                        data-node-action="${tool.action}"
+                        data-node-control="true"
+                        title="${tool.label}"
+                        aria-label="${tool.label}"
+                      >
+                        <span class="material-symbols-outlined">${tool.icon}</span>
+                      </span>
+                    `,
+                  )
+                  .join('')}
               </div>
             `
           : '';
@@ -5671,6 +6766,20 @@
           return;
         }
 
+        if (actionTarget && node.type === 'database') {
+          event.preventDefault();
+          event.stopPropagation();
+          openDatabaseActionMessage(node, actionTarget.dataset.nodeAction || 'metrics');
+          return;
+        }
+
+        if (actionTarget && node.type === 'devbox') {
+          event.preventDefault();
+          event.stopPropagation();
+          openDevboxActionMessage(node, actionTarget.dataset.nodeAction || 'metrics');
+          return;
+        }
+
         const imageManageTarget = event.target.closest('[data-node-image-manage]');
         if (imageManageTarget && node.type === 'container') {
           event.preventDefault();
@@ -5684,9 +6793,15 @@
           return;
         }
 
-        const copyTarget = event.target.closest('[data-node-copy]');
-        if (copyTarget) {
-          await copyToClipboard(copyTarget.dataset.nodeCopy || '');
+        if (maybeCopyValueFromTarget(event.target)) {
+          return;
+        }
+
+        if (event.target.closest('[data-node-db-public-toggle]') && node.type === 'database') {
+          event.preventDefault();
+          event.stopPropagation();
+          setDatabasePublicAccess(node, !Boolean(node.databaseConfig && node.databaseConfig.publicAccess));
+          renderAll();
           return;
         }
 
@@ -5731,6 +6846,7 @@
         if (
           event.target.closest('[data-node-domain]') ||
           event.target.closest('[data-node-copy]') ||
+          event.target.closest('[data-copy-value]') ||
           event.target.closest('[data-node-toggle]') ||
           event.target.closest('[data-node-image-manage]') ||
           event.target.closest('[data-node-action]') ||
@@ -5814,11 +6930,18 @@
 
     const context = activeDatabaseContext();
     const logContext = activeLogContext();
+    const devboxVersionContext = activeDevboxVersionContext();
     const projectListOpen = Boolean(state.projectListOpen);
-    dom.canvasStage.classList.toggle('workspace-mode', Boolean(context) || Boolean(logContext) || projectListOpen);
-    dom.canvasStage.classList.toggle('project-list-mode', projectListOpen && !context && !logContext);
+    dom.canvasStage.classList.toggle(
+      'workspace-mode',
+      Boolean(context) || Boolean(logContext) || Boolean(devboxVersionContext) || projectListOpen,
+    );
+    dom.canvasStage.classList.toggle(
+      'project-list-mode',
+      projectListOpen && !context && !logContext && !devboxVersionContext,
+    );
 
-    if (projectListOpen && !context && !logContext) {
+    if (projectListOpen && !context && !logContext && !devboxVersionContext) {
       const projects = collectProjectNodes();
       dom.canvasWorkspace.hidden = false;
       dom.canvasWorkspace.className = 'canvas-workspace active project-workspace';
@@ -5860,10 +6983,17 @@
       return;
     }
 
-    if (!context && logContext) {
+    if (!context && logContext && !devboxVersionContext) {
       dom.canvasWorkspace.hidden = false;
       dom.canvasWorkspace.className = 'canvas-workspace active log-workspace';
-      dom.canvasWorkspace.innerHTML = renderContainerLogsWorkspace(logContext);
+      dom.canvasWorkspace.innerHTML = renderLogsWorkspace(logContext);
+      return;
+    }
+
+    if (!context && devboxVersionContext) {
+      dom.canvasWorkspace.hidden = false;
+      dom.canvasWorkspace.className = 'canvas-workspace active devbox-workspace';
+      dom.canvasWorkspace.innerHTML = renderDevboxVersionWorkspace(devboxVersionContext);
       return;
     }
 
@@ -6016,12 +7146,14 @@
     `;
   }
 
-  function renderContainerLogsWorkspace(context) {
-    const { node, containers, view, dates } = context;
-    const { entries, mode, search, historyPreset, rangeStart, rangeEnd } = filteredContainerLogEntries(node, view);
-    const title = cardTitleForNode(node) || node.title || 'Container';
+  function renderLogsWorkspace(context) {
+    const { node, nodes, nodeType, view, dates } = context;
+    const { entries, mode, search, historyPreset, rangeStart, rangeEnd } = filteredLogEntries(node, view);
+    const title = cardTitleForNode(node) || node.title || (nodeType === 'database' ? 'Database' : 'Container');
     const notice = String(view.notice || '').trim();
     const showRangeInputs = mode === 'history' && historyPreset === 'range';
+    const listLabel = nodeType === 'database' ? 'Databases' : 'Containers';
+    const itemIcon = nodeType === 'database' ? iconMarkup('database') : iconMarkup('docker');
 
     return `
       <div class="db-workspace-header">
@@ -6053,20 +7185,20 @@
 
       <div class="db-workspace-body">
         <aside class="db-nav">
-          <div class="db-nav-label">Containers</div>
+          <div class="db-nav-label">${listLabel}</div>
           <div class="db-database-list">
-            ${containers
+            ${nodes
               .map((item) => {
                 return `
                   <button
                     type="button"
                     class="db-database-button ${item.id === node.id ? 'active' : ''}"
-                    data-log-action="select-container"
-                    data-log-container-id="${item.id}"
+                    data-log-action="select-node"
+                    data-log-node-id="${item.id}"
                   >
                     <strong class="db-entity-label">
-                      <span class="log-container-icon">${iconMarkup('docker')}</span>
-                      <span>${escapeHtml(cardTitleForNode(item) || item.title || 'Container')}</span>
+                      <span class="log-container-icon">${itemIcon}</span>
+                      <span>${escapeHtml(cardTitleForNode(item) || item.title || (nodeType === 'database' ? 'Database' : 'Container'))}</span>
                     </strong>
                     <span>${escapeHtml(compactStatusLabel(item.status) || 'running')}</span>
                   </button>
@@ -6268,7 +7400,8 @@
     const dbContext = activeDatabaseContext();
     if (dbContext) {
       const { node, database, view } = dbContext;
-      const draft = view.configDraft || { ...node.databaseConfig };
+      const draft = databasePreviewConfig(node, view.configDraft || node.databaseConfig);
+      const previewConfig = databasePreviewConfig(node, draft);
       const changed = databaseConfigChanged(node, draft);
       const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
       const statusText = view.error
@@ -6287,7 +7420,7 @@
         <div class="db-config-card">
           <div class="db-config-header">
             <div>
-              <strong>${escapeHtml(`${node.title} ${node.databaseConfig.version}`)}</strong>
+              <strong>${escapeHtml(`${databaseDisplayTitle(node, previewConfig)} ${previewConfig.version}`)}</strong>
             </div>
           </div>
 
@@ -6338,8 +7471,8 @@
               ${renderSliderField({
                 label: '存储大小',
                 field: 'storage',
-                valueText: String(draft.storage || node.databaseConfig.storage),
-                valueIndex: databaseSliderIndex('storage', String(draft.storage || node.databaseConfig.storage)),
+                valueText: String(previewConfig.storage || node.databaseConfig.storage),
+                valueIndex: databaseSliderIndex('storage', String(previewConfig.storage || node.databaseConfig.storage)),
                 maxIndex: DATABASE_STORAGE_OPTIONS.length - 1,
                 minLabel: DATABASE_STORAGE_OPTIONS[0],
                 maxLabel: DATABASE_STORAGE_OPTIONS[DATABASE_STORAGE_OPTIONS.length - 1],
@@ -6347,6 +7480,11 @@
                 dataFieldAttr: 'data-db-config-field',
               })}
             </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">连接地址。</div>
+            ${renderDatabaseAddressList(node, previewConfig, { showToggle: true })}
           </section>
 
           <div class="db-config-footer">
@@ -6628,10 +7766,10 @@
         memory: String(((view.configDraft && view.configDraft.memory) || devbox.memory) || '').trim(),
         diskSize: String(((view.configDraft && view.configDraft.diskSize) || devbox.diskSize) || '').trim(),
         startCommand: String(((view.configDraft && view.configDraft.startCommand) || devbox.startCommand) || '').trim(),
-        port: String(((view.configDraft && view.configDraft.port) || devbox.port) || '').trim(),
+        workingDir: String(((view.configDraft && view.configDraft.workingDir) || devbox.workingDir) || '').trim(),
+        port: String(((view.configDraft && view.configDraft.port) || devbox.port) || '').trim().replace(/\/tcp$/i, ''),
       };
       const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
-      const accessDomain = String((node.details && node.details.access) || '').trim();
       const changed = devboxConfigChanged(node, draft);
       const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
       const statusText = view.error
@@ -6654,6 +7792,42 @@
             </div>
             <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
           </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">启动命令、工作目录和监听端口是开发环境的核心信息。</div>
+            <div class="devbox-command-row">
+              <input
+                class="agui-input"
+                type="text"
+                value="${escapeHtml(draft.startCommand || '')}"
+                data-devbox-config-field="startCommand"
+                placeholder="pnpm dev --host 0.0.0.0 --port 3000"
+              />
+              <button type="button" class="db-primary-button" data-devbox-config-action="start">启动</button>
+            </div>
+            <div class="devbox-primary-grid">
+              <label class="db-config-label">
+                <span>工作空间 / 工作目录</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.workingDir || '')}"
+                  data-devbox-config-field="workingDir"
+                  placeholder="/workspace/app"
+                />
+              </label>
+              <label class="db-config-label">
+                <span>监听端口</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.port || '')}"
+                  data-devbox-config-field="port"
+                  placeholder="${escapeHtml(DEFAULT_DEPLOY_PORT)}"
+                />
+              </label>
+            </div>
+          </section>
 
           <section class="db-config-section">
             <div class="db-config-copy">资源规则。</div>
@@ -6694,46 +7868,6 @@
                 dataFieldAttr: 'data-devbox-config-field',
               })}
             </div>
-          </section>
-
-          ${
-            accessDomain
-              ? `<section class="db-config-section">
-                  <div class="db-config-copy">服务域名。</div>
-                  <button
-                    type="button"
-                    class="entry-domain-button"
-                    data-devbox-config-action="open-domain"
-                    data-devbox-domain="${escapeHtml(accessDomain)}"
-                  >
-                    <span>Workspace Service</span>
-                    <strong>${escapeHtml(accessDomain)}</strong>
-                  </button>
-                </section>`
-              : ''
-          }
-
-          <section class="db-config-section">
-            <div class="db-config-copy">启动命令。</div>
-            <input class="agui-input" type="text" value="${escapeHtml(draft.startCommand || '')}" data-devbox-config-field="startCommand" />
-          </section>
-
-          <section class="db-config-section">
-            <div class="db-config-copy">可直接通过本地 IDE 连接当前开发环境。</div>
-            <div class="devbox-ide-grid">
-              ${DEVBOX_IDE_CLIENTS.map(
-                (ide) => `
-                  <div class="devbox-ide-item">
-                    <span class="devbox-ide-icon" style="--ide-accent:${ide.accent};">${escapeHtml(ide.mark)}</span>
-                    <div class="devbox-ide-copy">
-                      <strong>${escapeHtml(ide.name)}</strong>
-                      <span>${escapeHtml(ide.note)}</span>
-                    </div>
-                  </div>
-                `,
-              ).join('')}
-            </div>
-            <div class="devbox-connect-hint">打开本地 IDE 后，可使用 Remote SSH、Gateway 或同类远程方式连接这个工作区。</div>
           </section>
 
           <div class="db-config-footer">
@@ -7222,9 +8356,6 @@
     }
 
     const scrollHost = dom.chatScroll || dom.chatLog;
-    const previousScrollTop = scrollHost.scrollTop;
-    const previousDistanceFromBottom = scrollHost.scrollHeight - scrollHost.scrollTop - scrollHost.clientHeight;
-    const shouldStickToBottom = previousDistanceFromBottom <= 28;
 
     dom.chatLog.innerHTML = state.messages
       .map((message) => {
@@ -7241,13 +8372,9 @@
       })
       .join('');
 
-    if (shouldStickToBottom) {
+    window.requestAnimationFrame(() => {
       scrollHost.scrollTop = scrollHost.scrollHeight;
-      return;
-    }
-
-    const nextTop = scrollHost.scrollHeight - scrollHost.clientHeight - previousDistanceFromBottom;
-    scrollHost.scrollTop = Number.isFinite(nextTop) ? Math.max(0, nextTop) : previousScrollTop;
+    });
   }
 
   function renderTimeline() {
@@ -7656,6 +8783,10 @@
     });
 
     dom.chatLog.addEventListener('click', (event) => {
+      if (maybeCopyValueFromTarget(event.target)) {
+        return;
+      }
+
       const entryOpenButton = event.target.closest('[data-entry-config-action="open-domain"]');
       if (entryOpenButton) {
         openDomainTarget(entryOpenButton.dataset.entryDomain || '');
@@ -7735,6 +8866,35 @@
           return;
         }
 
+        if (state.devboxView && devboxButton.dataset.devboxConfigAction === 'start') {
+          runDevboxStartCommand();
+          return;
+        }
+
+        if (state.devboxView && devboxButton.dataset.devboxConfigAction === 'metrics') {
+          const node = getNodeById(state.devboxView.nodeId);
+          if (node) {
+            openDevboxActionMessage(node, 'metrics');
+          }
+          return;
+        }
+
+        if (state.devboxView && devboxButton.dataset.devboxConfigAction === 'terminal') {
+          const node = getNodeById(state.devboxView.nodeId);
+          if (node) {
+            openDevboxActionMessage(node, 'terminal');
+          }
+          return;
+        }
+
+        if (state.devboxView && devboxButton.dataset.devboxConfigAction === 'version-manager') {
+          const node = getNodeById(state.devboxView.nodeId);
+          if (node) {
+            openDevboxActionMessage(node, 'version-manager');
+          }
+          return;
+        }
+
         if (state.devboxView && devboxButton.dataset.devboxConfigAction === 'save') {
           saveDevboxConfig();
           return;
@@ -7769,6 +8929,10 @@
 
     if (dom.canvasWorkspace) {
       dom.canvasWorkspace.addEventListener('click', (event) => {
+        if (maybeCopyValueFromTarget(event.target)) {
+          return;
+        }
+
         const projectButton = event.target.closest('[data-project-action]');
         if (projectButton) {
           if (projectButton.dataset.projectAction === 'create-project') {
@@ -7810,9 +8974,9 @@
             return;
           }
 
-          if (logButton.dataset.logAction === 'select-container') {
-            const nextNode = getNodeById(logButton.dataset.logContainerId || '');
-            if (!nextNode || nextNode.type !== 'container') {
+          if (logButton.dataset.logAction === 'select-node') {
+            const nextNode = getNodeById(logButton.dataset.logNodeId || '');
+            if (!nextNode || !['container', 'database'].includes(nextNode.type)) {
               return;
             }
 
@@ -7820,17 +8984,63 @@
             state.hoveredEdgeId = null;
             state.selectedEdgeId = null;
             closeProjectListView();
-            closeDatabaseWorkspace();
             closeEntryContext();
             closeDevboxContext();
-            openContainerContext(nextNode.id);
-            openContainerLogsWorkspace(nextNode.id);
+            if (nextNode.type === 'container') {
+              closeDatabaseWorkspace();
+              openContainerContext(nextNode.id);
+            } else {
+              closeContainerContext();
+              closeDatabaseWorkspace();
+            }
+            openNodeLogsWorkspace(nextNode.id);
             renderAll();
             return;
           }
 
           if (logButton.dataset.logAction === 'export-logs') {
             exportActiveContainerLogs();
+            return;
+          }
+        }
+
+        const devboxWorkspaceButton = event.target.closest('[data-devbox-workspace-action]');
+        if (devboxWorkspaceButton) {
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'close-versions') {
+            closeDevboxVersionWorkspace();
+            renderAll();
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'publish-release') {
+            publishDevboxRelease();
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'select-release') {
+            const context = activeDevboxVersionContext();
+            if (!context) {
+              return;
+            }
+            context.view.releaseId = devboxWorkspaceButton.dataset.devboxReleaseId || '';
+            context.view.releaseError = '';
+            context.view.releaseInfo = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'deploy-release') {
+            deployDevboxReleaseFromWorkspace(devboxWorkspaceButton.dataset.devboxReleaseId || '');
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'publish-template') {
+            publishDevboxTemplateFromWorkspace(devboxWorkspaceButton.dataset.devboxReleaseId || '');
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'create-from-template') {
+            createDevboxFromPublishedTemplate(devboxWorkspaceButton.dataset.devboxTemplateId || '');
             return;
           }
         }
@@ -7940,14 +9150,14 @@
 
         const configInput = event.target.closest('[data-db-config-field]');
         if (configInput && state.databaseView) {
-          let nextValue = configInput.value;
+          let nextValue = configInput.type === 'checkbox' ? configInput.checked : configInput.value;
           if (configInput.type === 'range') {
             nextValue = databaseSliderValue(configInput.dataset.dbConfigField, configInput.value);
           }
 
-          state.databaseView.configDraft[configInput.dataset.dbConfigField] =
-            configInput.dataset.dbConfigField === 'backupPolicy' ? normalizeBackupPolicy(nextValue) : nextValue;
-          if (configInput.dataset.dbConfigField === 'backupPolicy') {
+          const field = configInput.dataset.dbConfigField;
+          applyDatabaseConfigDraftField(field, field === 'backupPolicy' ? normalizeBackupPolicy(nextValue) : nextValue);
+          if (field === 'backupPolicy') {
             const defaults = backupScheduleDefaults(state.databaseView.configDraft.backupPolicy);
             state.databaseView.configDraft.backupHour = state.databaseView.configDraft.backupHour || defaults.backupHour;
             state.databaseView.configDraft.backupMinute =
@@ -7955,8 +9165,19 @@
             state.databaseView.configDraft.backupWeekday =
               state.databaseView.configDraft.backupWeekday || defaults.backupWeekday;
           }
-          state.databaseView.saveState = 'editing';
-          state.databaseView.error = '';
+          return;
+        }
+
+        const devboxReleaseInput = event.target.closest('[data-devbox-release-field]');
+        if (devboxReleaseInput) {
+          const context = activeDevboxVersionContext();
+          if (!context) {
+            return;
+          }
+
+          context.view.releaseDraft = devboxReleaseInput.value;
+          context.view.releaseError = '';
+          context.view.releaseInfo = '';
           return;
         }
 
@@ -7996,11 +9217,15 @@
 
         const configInput = event.target.closest('[data-db-config-field]');
         if (configInput && state.databaseView) {
-          state.databaseView.configDraft[configInput.dataset.dbConfigField] =
-            configInput.dataset.dbConfigField === 'backupPolicy'
+          const field = configInput.dataset.dbConfigField;
+          const nextValue =
+            configInput.type === 'checkbox'
+              ? configInput.checked
+              : field === 'backupPolicy'
               ? normalizeBackupPolicy(configInput.value)
               : configInput.value;
-          if (configInput.dataset.dbConfigField === 'backupPolicy') {
+          applyDatabaseConfigDraftField(field, nextValue);
+          if (field === 'backupPolicy') {
             const defaults = backupScheduleDefaults(state.databaseView.configDraft.backupPolicy);
             state.databaseView.configDraft.backupHour = state.databaseView.configDraft.backupHour || defaults.backupHour;
             state.databaseView.configDraft.backupMinute =
@@ -8008,8 +9233,20 @@
             state.databaseView.configDraft.backupWeekday =
               state.databaseView.configDraft.backupWeekday || defaults.backupWeekday;
           }
-          state.databaseView.saveState = 'editing';
-          state.databaseView.error = '';
+          renderCanvasWorkspace();
+          return;
+        }
+
+        const devboxReleaseInput = event.target.closest('[data-devbox-release-field]');
+        if (devboxReleaseInput) {
+          const context = activeDevboxVersionContext();
+          if (!context) {
+            return;
+          }
+
+          context.view.releaseDraft = devboxReleaseInput.value;
+          context.view.releaseError = '';
+          context.view.releaseInfo = '';
           renderCanvasWorkspace();
           return;
         }
@@ -8036,31 +9273,12 @@
         }
 
         const field = input.dataset.dbConfigField;
-        let nextValue = input.value;
+        let nextValue = input.type === 'checkbox' ? input.checked : input.value;
         if (input.type === 'range') {
           nextValue = databaseSliderValue(field, input.value);
         }
 
-        state.databaseView.configDraft[field] = nextValue;
-        state.databaseView.saveState = 'editing';
-        state.databaseView.error = '';
-
-        if (field === 'instanceSpec') {
-          const profile = databaseSpecProfile(nextValue);
-          state.databaseView.configDraft.cpu = profile.cpu;
-          state.databaseView.configDraft.memory = profile.memory;
-        }
-
-        if (field === 'cpu' || field === 'memory') {
-          state.databaseView.configDraft.instanceSpec = resolveDatabaseInstanceSpec(
-            state.databaseView.configDraft.flavor || (state.databaseView.nodeId && getNodeById(state.databaseView.nodeId).databaseConfig.flavor) || 'PostgreSQL',
-            field === 'cpu' ? nextValue : state.databaseView.configDraft.cpu,
-            field === 'memory' ? nextValue : state.databaseView.configDraft.memory,
-            state.databaseView.configDraft.instanceSpec,
-          );
-        }
-
-        return true;
+        return applyDatabaseConfigDraftField(field, nextValue);
       };
 
       const updateContainerConfigDraft = (event) => {
@@ -8193,6 +9411,10 @@
       });
 
       dom.chatContext.addEventListener('click', (event) => {
+        if (maybeCopyValueFromTarget(event.target)) {
+          return;
+        }
+
         const dbButton = event.target.closest('[data-db-config-action]');
         if (dbButton && state.databaseView && dbButton.dataset.dbConfigAction === 'save') {
           saveDatabaseConfig();
@@ -8205,17 +9427,46 @@
           return;
         }
 
-        const devboxConfigButton = event.target.closest('[data-devbox-config-action]');
-        if (devboxConfigButton) {
-          if (devboxConfigButton.dataset.devboxConfigAction === 'open-domain') {
-            openDomainTarget(devboxConfigButton.dataset.devboxDomain || '');
-            return;
-          }
+      const devboxConfigButton = event.target.closest('[data-devbox-config-action]');
+      if (devboxConfigButton) {
+        if (devboxConfigButton.dataset.devboxConfigAction === 'open-domain') {
+          openDomainTarget(devboxConfigButton.dataset.devboxDomain || '');
+          return;
+        }
 
-          if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'save') {
-            saveDevboxConfig();
-            return;
+        if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'start') {
+          runDevboxStartCommand();
+          return;
+        }
+
+        if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'metrics') {
+          const node = getNodeById(state.devboxView.nodeId);
+          if (node) {
+            openDevboxActionMessage(node, 'metrics');
           }
+          return;
+        }
+
+        if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'terminal') {
+          const node = getNodeById(state.devboxView.nodeId);
+          if (node) {
+            openDevboxActionMessage(node, 'terminal');
+          }
+          return;
+        }
+
+        if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'version-manager') {
+          const node = getNodeById(state.devboxView.nodeId);
+          if (node) {
+            openDevboxActionMessage(node, 'version-manager');
+          }
+          return;
+        }
+
+        if (state.devboxView && devboxConfigButton.dataset.devboxConfigAction === 'save') {
+          saveDevboxConfig();
+          return;
+        }
         }
 
         const entryButton = event.target.closest('[data-entry-config-action]');
@@ -8875,6 +10126,19 @@
     const port = String(options.port || inferPortFromInput(input) || DEFAULT_DEPLOY_PORT);
     const owner = randomName();
     const workspaceCode = Math.floor(Math.random() * 900 + 100);
+    const workingDir = String(options.workingDir || defaultDevboxWorkingDir(template, owner)).trim();
+    const image = String(
+      options.image ||
+        defaultDevboxImage(
+          {
+            title: owner,
+            templateId: template.id,
+            version,
+          },
+          template,
+        ),
+    ).trim();
+    const releaseHistory = normalizeImageHistory(options.releaseHistory, image);
     const domain =
       resolveDomainInput(options.domain) || `${template.id}-devbox-${workspaceCode}.cloud.sealos.run`;
     const entryId = createId('entry');
@@ -8932,7 +10196,10 @@
           diskSize: '50Gi',
           diskUsed: estimateUsedDisk('50Gi'),
           startCommand: defaultDevboxStartCommand(template, port),
+          workingDir,
           port: `${port}/TCP`,
+          image,
+          releaseHistory,
         },
         operations: ['复制访问地址', '挂载仓库', '重启容器'],
       },
@@ -9363,6 +10630,49 @@
     return [flavor, version].filter(Boolean).join(' ');
   }
 
+  function renderDatabaseAddressRow(label, value) {
+    const raw = String(value || '').trim();
+    return `
+      <div class="db-address-row">
+        <span class="db-address-label">${escapeHtml(label)}</span>
+        <div class="db-address-main">
+          <span class="db-address-value">${escapeHtml(raw ? maskConnectionString(raw) : '未生成')}</span>
+          ${
+            raw
+              ? `<button type="button" class="db-copy-action" data-copy-value="${escapeHtml(raw)}">复制</button>`
+              : ''
+          }
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDatabaseAddressList(node, config, options = {}) {
+    const internalConnect = databaseInternalConnect(node, config);
+    const publicConnect = String((config && config.publicConnect) || deriveDatabasePublicConnect(node, config, internalConnect)).trim();
+    const disabledAttr = options.disabled ? 'disabled' : '';
+
+    return `
+      ${
+        options.showToggle
+          ? `
+              <label class="db-access-toggle">
+                <span>数据库外网地址</span>
+                <span class="db-access-toggle-main">
+                  <input type="checkbox" ${config && config.publicAccess ? 'checked' : ''} data-db-config-field="publicAccess" ${disabledAttr} />
+                  <strong>${config && config.publicAccess ? '已开启' : '未开启'}</strong>
+                </span>
+              </label>
+            `
+          : ''
+      }
+      <div class="db-address-list ${options.compact ? 'compact' : ''}">
+        ${renderDatabaseAddressRow('内网地址', internalConnect)}
+        ${config && config.publicAccess ? renderDatabaseAddressRow('外网地址', publicConnect) : ''}
+      </div>
+    `;
+  }
+
   function devboxStackLabels(node, config) {
     const labels = [];
     const pushLabel = (value) => {
@@ -9429,15 +10739,48 @@
 
   function renderNodeDevboxCard(node, config) {
     const current = config || (node && node.devboxConfig) || {};
+    const port = String(current.port || DEFAULT_DEPLOY_PORT).trim().replace(/\/tcp$/i, '');
+    const workingDir = String(current.workingDir || '/workspace').trim();
+    const startCommand = String(current.startCommand || 'sleep infinity').trim();
 
     return `
-      <div class="node-container-meters">
-        ${renderContainerMeter('CPU', current.usedCpu || estimateUsedCpu(current.cpu || '4'), current.cpu || '4', { kind: 'cpu' })}
-        ${renderContainerMeter('内存', current.usedMemory || estimateUsedMemory(current.memory || '8Gi'), current.memory || '8Gi')}
-        ${renderContainerMeter('磁盘', current.diskUsed || estimateUsedDisk(current.diskSize || '50Gi'), current.diskSize || '50Gi', {
-          kind: 'capacity',
-          icon: 'storage',
-        })}
+      <div class="devbox-key-grid">
+        <div class="devbox-key-item">
+          <span>启动命令</span>
+          <strong>${escapeHtml(startCommand)}</strong>
+        </div>
+        <div class="devbox-key-item">
+          <span>工作目录</span>
+          <strong>${escapeHtml(workingDir)}</strong>
+        </div>
+        <div class="devbox-key-item">
+          <span>监听端口</span>
+          <strong>${escapeHtml(`${port}/TCP`)}</strong>
+        </div>
+      </div>
+
+      <div class="node-container-tools node-tool-row-3">
+        ${[
+          { action: 'metrics', icon: 'monitoring', label: 'Metrics' },
+          { action: 'terminal', icon: 'terminal', label: 'Terminal' },
+          { action: 'version-manager', icon: 'inventory_2', label: '版本管理' },
+        ]
+          .map(
+            (tool) => `
+              <span
+                class="node-container-tool"
+                role="button"
+                tabindex="-1"
+                data-node-action="${tool.action}"
+                data-node-control="true"
+                title="${tool.label}"
+                aria-label="${tool.label}"
+              >
+                <span class="material-symbols-outlined">${tool.icon}</span>
+              </span>
+            `,
+          )
+          .join('')}
       </div>
     `;
   }
@@ -9696,6 +11039,7 @@
       Boolean(dom.canvasStage && dom.canvasWorld) &&
       !state.projectListOpen &&
       !Boolean(activeDatabaseContext()) &&
+      !Boolean(activeDevboxVersionContext()) &&
       !Boolean(activeLogContext()) &&
       !Boolean(state.windowModal)
     );
@@ -10063,6 +11407,15 @@
       : state.messages.find((message) => message.kind === 'agui' && message.ui === 'docker-deploy');
 
     if (existing) {
+      if (options.image !== undefined) {
+        existing.payload.image = options.image;
+      }
+      if (options.port !== undefined) {
+        existing.payload.port = options.port;
+      }
+      if (options.note !== undefined) {
+        existing.payload.prefillNote = options.note;
+      }
       existing.payload.error = '';
       existing.payload.startArgs = existing.payload.startArgs || 'start.sh';
       renderChat();
@@ -10080,11 +11433,15 @@
       diskSize: '10Gi',
       mountPath: '/data',
       domain: AUTO_DOMAIN_SENTINEL,
-      port: DEFAULT_DEPLOY_PORT,
+      port: options.port !== undefined ? options.port : DEFAULT_DEPLOY_PORT,
       deployState: 'idle',
       error: '',
       lastImage: '',
+      prefillNote: options.note || '',
     });
+    if (options.image !== undefined) {
+      message.payload.image = options.image;
+    }
     focusAguiField(message.id, 'image');
   }
 
@@ -10139,16 +11496,25 @@
       : state.messages.find((message) => message.kind === 'agui' && message.ui === 'devbox-deploy');
 
     if (existing) {
+      if (options.templateId !== undefined) {
+        existing.payload.templateId = options.templateId;
+      }
+      if (options.version !== undefined) {
+        existing.payload.version = options.version;
+      }
+      if (options.note !== undefined) {
+        existing.payload.prefillNote = options.note;
+      }
       existing.payload.error = '';
       renderChat();
       focusAguiField(existing.id, 'cpu');
       return;
     }
 
-    const nextjsTemplate = getDevboxTemplateById('nextjs') || DEVBOX_TEMPLATES[0];
+    const nextjsTemplate = getDevboxTemplateById(options.templateId || 'nextjs') || DEVBOX_TEMPLATES[0];
     const message = addAguiMessage('devbox-deploy', {
       templateId: nextjsTemplate ? nextjsTemplate.id : '',
-      version: defaultDevboxVersion(nextjsTemplate),
+      version: options.version !== undefined ? options.version : defaultDevboxVersion(nextjsTemplate),
       cpu: '2',
       memory: '4Gi',
       port: DEFAULT_DEPLOY_PORT,
@@ -10158,6 +11524,7 @@
       lastTemplate: '',
       lastVersion: '',
       lastDomain: '',
+      prefillNote: options.note || '',
     });
     focusAguiField(message.id, 'cpu');
   }
@@ -10218,7 +11585,8 @@
       return renderMissingConfigMessage('数据库配置');
     }
 
-    const draft = activeContext ? activeContext.view.configDraft || { ...node.databaseConfig } : { ...node.databaseConfig };
+    const draft = databasePreviewConfig(node, activeContext ? activeContext.view.configDraft || node.databaseConfig : node.databaseConfig);
+    const previewConfig = databasePreviewConfig(node, draft);
     const changed = activeContext ? databaseConfigChanged(node, draft) : false;
     const statusClass = activeContext
       ? activeContext.view.error
@@ -10246,7 +11614,7 @@
         <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
           <div class="db-config-header">
             <div>
-              <strong>${escapeHtml(`${node.title} ${node.databaseConfig.version}`)}</strong>
+              <strong>${escapeHtml(`${databaseDisplayTitle(node, previewConfig)} ${previewConfig.version}`)}</strong>
             </div>
           </div>
 
@@ -10297,8 +11665,8 @@
               ${renderSliderField({
                 label: '存储大小',
                 field: 'storage',
-                valueText: String(draft.storage || node.databaseConfig.storage),
-                valueIndex: databaseSliderIndex('storage', String(draft.storage || node.databaseConfig.storage)),
+                valueText: String(previewConfig.storage || node.databaseConfig.storage),
+                valueIndex: databaseSliderIndex('storage', String(previewConfig.storage || node.databaseConfig.storage)),
                 maxIndex: DATABASE_STORAGE_OPTIONS.length - 1,
                 minLabel: DATABASE_STORAGE_OPTIONS[0],
                 maxLabel: DATABASE_STORAGE_OPTIONS[DATABASE_STORAGE_OPTIONS.length - 1],
@@ -10306,6 +11674,11 @@
                 dataFieldAttr: 'data-db-config-field',
               })}
             </div>
+          </section>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">连接地址。</div>
+            ${renderDatabaseAddressList(node, previewConfig, { showToggle: true, disabled: !activeContext })}
           </section>
 
           <div class="db-config-footer">
@@ -10744,10 +12117,10 @@
       diskSize: String((((activeContext && activeContext.view.configDraft) || {}).diskSize || devbox.diskSize) || '').trim(),
       diskUsed: String((((activeContext && activeContext.view.configDraft) || {}).diskUsed || devbox.diskUsed) || '').trim(),
       startCommand: String((((activeContext && activeContext.view.configDraft) || {}).startCommand || devbox.startCommand) || '').trim(),
-      port: String((((activeContext && activeContext.view.configDraft) || {}).port || devbox.port) || '').trim(),
+      workingDir: String((((activeContext && activeContext.view.configDraft) || {}).workingDir || devbox.workingDir) || '').trim(),
+      port: String((((activeContext && activeContext.view.configDraft) || {}).port || devbox.port) || '').trim().replace(/\/tcp$/i, ''),
     };
     const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
-    const accessDomain = String((node.details && node.details.access) || '').trim();
     const changed = activeContext ? devboxConfigChanged(node, draft) : false;
     const statusClass = activeContext
       ? activeContext.view.error
@@ -10779,6 +12152,42 @@
             </div>
             <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
           </div>
+
+          <section class="db-config-section">
+            <div class="db-config-copy">启动命令、工作目录和监听端口是开发环境的核心信息。</div>
+            <div class="devbox-command-row">
+              <input
+                class="agui-input"
+                type="text"
+                value="${escapeHtml(draft.startCommand || '')}"
+                data-devbox-config-field="startCommand"
+                ${disabledAttr}
+              />
+              <button type="button" class="db-primary-button" data-devbox-config-action="start" ${disabledAttr}>启动</button>
+            </div>
+            <div class="devbox-primary-grid">
+              <label class="db-config-label">
+                <span>工作空间 / 工作目录</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.workingDir || '')}"
+                  data-devbox-config-field="workingDir"
+                  ${disabledAttr}
+                />
+              </label>
+              <label class="db-config-label">
+                <span>监听端口</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(draft.port || '')}"
+                  data-devbox-config-field="port"
+                  ${disabledAttr}
+                />
+              </label>
+            </div>
+          </section>
 
           <section class="db-config-section">
             <div class="db-config-copy">资源规则。</div>
@@ -10819,46 +12228,6 @@
                 dataFieldAttr: 'data-devbox-config-field',
               })}
             </div>
-          </section>
-
-          ${
-            accessDomain
-              ? `<section class="db-config-section">
-                  <div class="db-config-copy">服务域名。</div>
-                  <button
-                    type="button"
-                    class="entry-domain-button"
-                    data-devbox-config-action="open-domain"
-                    data-devbox-domain="${escapeHtml(accessDomain)}"
-                  >
-                    <span>Workspace Service</span>
-                    <strong>${escapeHtml(accessDomain)}</strong>
-                  </button>
-                </section>`
-              : ''
-          }
-
-          <section class="db-config-section">
-            <div class="db-config-copy">启动命令。</div>
-            <input class="agui-input" type="text" value="${escapeHtml(draft.startCommand || '')}" data-devbox-config-field="startCommand" ${disabledAttr} />
-          </section>
-
-          <section class="db-config-section">
-            <div class="db-config-copy">可直接通过本地 IDE 连接当前开发环境。</div>
-            <div class="devbox-ide-grid">
-              ${DEVBOX_IDE_CLIENTS.map(
-                (ide) => `
-                  <div class="devbox-ide-item">
-                    <span class="devbox-ide-icon" style="--ide-accent:${ide.accent};">${escapeHtml(ide.mark)}</span>
-                    <div class="devbox-ide-copy">
-                      <strong>${escapeHtml(ide.name)}</strong>
-                      <span>${escapeHtml(ide.note)}</span>
-                    </div>
-                  </div>
-                `,
-              ).join('')}
-            </div>
-            <div class="devbox-connect-hint">打开本地 IDE 后，可使用 Remote SSH、Gateway 或同类远程方式连接这个工作区。</div>
           </section>
 
           <div class="db-config-footer">
@@ -11012,6 +12381,170 @@
     `;
   }
 
+  function renderDatabaseMetricsMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'database') {
+      return renderMissingConfigMessage('数据库监控');
+    }
+
+    const payload = message.payload || buildDatabaseMetricsPayload(node);
+    const cpu = payload.cpu || metricSnapshot('0.8', '2', 'cpu', `${node.id}:db:cpu:fallback`);
+    const memory = payload.memory || metricSnapshot('1Gi', '4Gi', 'capacity', `${node.id}:db:memory:fallback`);
+    const disk = payload.disk || { mounted: true, used: '30Gi', total: '100Gi', percent: 30, mountPath: '/var/lib/data' };
+    const status = compactStatusLabel(node.status) || 'running';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-metrics-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} 数据库监控</strong>
+              <span>${escapeHtml(payload.engine || 'Database')} · ${escapeHtml(payload.windowLabel || '最近一段时间的资源波动。')}</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(status)}</div>
+          </div>
+
+          <div class="container-metrics-grid">
+            <section class="metrics-chart-card">
+              <div class="metrics-chart-head">
+                <div>
+                  <strong>CPU</strong>
+                  <span>${escapeHtml(usageLevelText(cpu.percent))}</span>
+                </div>
+                <div class="metrics-chart-value">
+                  <span>${escapeHtml(`${cpu.used} / ${cpu.total}`)}</span>
+                  <strong>${escapeHtml(`${cpu.percent}%`)}</strong>
+                </div>
+              </div>
+              ${renderMetricsChart(cpu, 'cpu')}
+              <div class="metrics-chart-foot">
+                <span>-60m</span>
+                <span>now</span>
+              </div>
+            </section>
+
+            <section class="metrics-chart-card">
+              <div class="metrics-chart-head">
+                <div>
+                  <strong>内存</strong>
+                  <span>${escapeHtml(usageLevelText(memory.percent))}</span>
+                </div>
+                <div class="metrics-chart-value">
+                  <span>${escapeHtml(`${memory.used} / ${memory.total}`)}</span>
+                  <strong>${escapeHtml(`${memory.percent}%`)}</strong>
+                </div>
+              </div>
+              ${renderMetricsChart(memory, 'memory')}
+              <div class="metrics-chart-foot">
+                <span>-60m</span>
+                <span>now</span>
+              </div>
+            </section>
+          </div>
+
+          <section class="metrics-disk-card">
+            <div class="metrics-disk-head">
+              <div>
+                <strong>磁盘</strong>
+                <span>${escapeHtml(`挂载目录 ${disk.mountPath || '/var/lib/data'}`)}</span>
+              </div>
+              <div class="metrics-chart-value">
+                <span>${escapeHtml(`${disk.used} / ${disk.total}`)}</span>
+                <strong>${escapeHtml(`${disk.percent}%`)}</strong>
+              </div>
+            </div>
+            <div class="container-meter-track metrics-disk-track">
+              <span class="container-meter-fill metrics-disk-fill" style="width:${disk.percent}%"></span>
+            </div>
+          </section>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDevboxMetricsMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'devbox') {
+      return renderMissingConfigMessage('开发环境监控');
+    }
+
+    const payload = message.payload || buildDevboxMetricsPayload(node);
+    const cpu = payload.cpu || metricSnapshot('1.1', '2', 'cpu', `${node.id}:devbox:cpu:fallback`);
+    const memory = payload.memory || metricSnapshot('2Gi', '4Gi', 'capacity', `${node.id}:devbox:memory:fallback`);
+    const disk = payload.disk || { mounted: true, used: '18Gi', total: '50Gi', percent: 36, mountPath: '/workspace' };
+    const status = compactStatusLabel(node.status) || 'running';
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-metrics-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} 开发环境监控</strong>
+              <span>${escapeHtml(payload.runtime || 'DevBox')} · ${escapeHtml(payload.windowLabel || '最近一段时间的资源波动。')}</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(status)}</div>
+          </div>
+
+          <div class="container-metrics-grid">
+            <section class="metrics-chart-card">
+              <div class="metrics-chart-head">
+                <div>
+                  <strong>CPU</strong>
+                  <span>${escapeHtml(usageLevelText(cpu.percent))}</span>
+                </div>
+                <div class="metrics-chart-value">
+                  <span>${escapeHtml(`${cpu.used} / ${cpu.total}`)}</span>
+                  <strong>${escapeHtml(`${cpu.percent}%`)}</strong>
+                </div>
+              </div>
+              ${renderMetricsChart(cpu, 'cpu')}
+              <div class="metrics-chart-foot">
+                <span>-60m</span>
+                <span>now</span>
+              </div>
+            </section>
+
+            <section class="metrics-chart-card">
+              <div class="metrics-chart-head">
+                <div>
+                  <strong>内存</strong>
+                  <span>${escapeHtml(usageLevelText(memory.percent))}</span>
+                </div>
+                <div class="metrics-chart-value">
+                  <span>${escapeHtml(`${memory.used} / ${memory.total}`)}</span>
+                  <strong>${escapeHtml(`${memory.percent}%`)}</strong>
+                </div>
+              </div>
+              ${renderMetricsChart(memory, 'memory')}
+              <div class="metrics-chart-foot">
+                <span>-60m</span>
+                <span>now</span>
+              </div>
+            </section>
+          </div>
+
+          <section class="metrics-disk-card">
+            <div class="metrics-disk-head">
+              <div>
+                <strong>磁盘</strong>
+                <span>${escapeHtml(`工作目录 ${disk.mountPath || '/workspace'}`)}</span>
+              </div>
+              <div class="metrics-chart-value">
+                <span>${escapeHtml(`${disk.used} / ${disk.total}`)}</span>
+                <strong>${escapeHtml(`${disk.percent}%`)}</strong>
+              </div>
+            </div>
+            <div class="container-meter-track metrics-disk-track">
+              <span class="container-meter-fill metrics-disk-fill" style="width:${disk.percent}%"></span>
+            </div>
+          </section>
+        </div>
+      </div>
+    `;
+  }
+
   function renderContainerTerminalMessage(message) {
     const node = getNodeById(message.payload && message.payload.nodeId);
     if (!node || node.type !== 'container') {
@@ -11064,6 +12597,33 @@
             <div>
               <strong>${escapeHtml(cardTitleForNode(node) || node.title)} Log</strong>
               <span>最近输出的关键运行日志。</span>
+            </div>
+            <div class="agui-card-pill">${escapeHtml(compactStatusLabel(node.status) || 'running')}</div>
+          </div>
+          <div class="db-sql-block container-log-output">
+            <pre>${escapeHtml(((payload.lines && payload.lines.join('\n')) || '').trim())}</pre>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDatabaseLogsMessage(message) {
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'database') {
+      return renderMissingConfigMessage('数据库日志');
+    }
+
+    const payload = message.payload || buildDatabaseLogsPayload(node);
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card container-log-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
+            <div>
+              <strong>${escapeHtml(cardTitleForNode(node) || node.title)} Database Log</strong>
+              <span>最近输出的关键数据库日志。</span>
             </div>
             <div class="agui-card-pill">${escapeHtml(compactStatusLabel(node.status) || 'running')}</div>
           </div>
@@ -11250,12 +12810,24 @@
       return renderContainerMetricsMessage(message);
     }
 
+    if (message.ui === 'database-metrics') {
+      return renderDatabaseMetricsMessage(message);
+    }
+
+    if (message.ui === 'devbox-metrics') {
+      return renderDevboxMetricsMessage(message);
+    }
+
     if (message.ui === 'container-terminal') {
       return renderContainerTerminalMessage(message);
     }
 
     if (message.ui === 'container-logs') {
       return renderContainerLogsMessage(message);
+    }
+
+    if (message.ui === 'database-logs') {
+      return renderDatabaseLogsMessage(message);
     }
 
     if (message.ui === 'container-events') {
@@ -11830,6 +13402,8 @@
         ? 'Deploying container runtime...'
         : deployState === 'done'
         ? `Last deploy: ${payload.lastImage || payload.image || ''}`
+        : payload.prefillNote
+        ? payload.prefillNote
         : 'Configure image, runtime, resource and network parameters.';
 
     return `
@@ -12054,15 +13628,19 @@
     const selectedTemplate = getDevboxTemplateById(payload.templateId) || DEVBOX_TEMPLATES[0];
     const portValue = payload.port !== undefined ? payload.port : DEFAULT_DEPLOY_PORT;
     const domainValue = payload.domain !== undefined ? payload.domain : AUTO_DOMAIN_SENTINEL;
-    const versionOptions = (selectedTemplate && selectedTemplate.versions) || [];
-    const selectedVersion = versionOptions.includes(payload.version)
-      ? payload.version
-      : defaultDevboxVersion(selectedTemplate);
+    const versionOptions = uniqueTags(
+      [payload.version, ...(((selectedTemplate && selectedTemplate.versions) || []).filter(Boolean))]
+        .map((item) => String(item || '').trim())
+        .filter(Boolean),
+    );
+    const selectedVersion = String(payload.version || defaultDevboxVersion(selectedTemplate)).trim() || defaultDevboxVersion(selectedTemplate);
     const statusText =
       deployState === 'deploying'
         ? `Provisioning ${selectedTemplate ? selectedTemplate.name : 'DevBox'} workspace...`
         : deployState === 'done'
         ? `Last deploy: ${payload.lastTemplate || ''}${payload.lastVersion ? ` ${payload.lastVersion}` : ''}${payload.lastDomain ? ` / ${payload.lastDomain}` : ''}`
+        : payload.prefillNote
+        ? payload.prefillNote
         : selectedTemplate
         ? `${selectedTemplate.name} ${selectedVersion}`
         : 'Choose a language or framework template for DevBox.';
