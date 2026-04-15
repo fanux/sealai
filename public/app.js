@@ -342,6 +342,7 @@
     currentTask: '待命',
     lastIssue: null,
     databaseView: null,
+    logsView: null,
     entryView: null,
     containerView: null,
     devboxView: null,
@@ -1984,6 +1985,7 @@
       return;
     }
 
+    state.logsView = null;
     syncDatabaseNode(node);
     const current = state.databaseView && state.databaseView.nodeId === nodeId ? state.databaseView : null;
     const databases = (node.databaseWorkspace && node.databaseWorkspace.databases) || [];
@@ -2148,6 +2150,73 @@
       node,
       container: node.containerConfig,
       view: state.containerView,
+    };
+  }
+
+  function openContainerLogsWorkspace(nodeId) {
+    const node = getNodeById(nodeId);
+    if (!node || node.type !== 'container') {
+      state.logsView = null;
+      return;
+    }
+
+    syncContainerNode(node);
+    state.databaseView = null;
+    const current = state.logsView;
+    const dates = recentLogDates();
+    const nextRangeStart =
+      current && dates.includes(String(current.rangeStart || '')) ? String(current.rangeStart) : dates[Math.min(1, dates.length - 1)];
+    const nextRangeEnd = current && dates.includes(String(current.rangeEnd || '')) ? String(current.rangeEnd) : dates[0];
+
+    state.activeConfigMessageId = null;
+    state.logsView = {
+      nodeId,
+      mode: current && current.mode === 'history' ? 'history' : 'realtime',
+      search: current ? String(current.search || '') : '',
+      historyPreset:
+        current && ['10m', '1h', '1d', 'range'].includes(String(current.historyPreset || ''))
+          ? String(current.historyPreset)
+          : '10m',
+      rangeStart: nextRangeStart,
+      rangeEnd: nextRangeEnd,
+      notice: current && current.nodeId === nodeId ? String(current.notice || '') : '',
+    };
+  }
+
+  function closeLogWorkspace() {
+    state.logsView = null;
+  }
+
+  function activeLogContext() {
+    if (!state.logsView) {
+      return null;
+    }
+
+    const node = getNodeById(state.logsView.nodeId);
+    if (!node || node.type !== 'container') {
+      return null;
+    }
+
+    syncContainerNode(node);
+    const dates = recentLogDates();
+    const containers = state.nodes
+      .filter((item) => item.type === 'container')
+      .map((item) => syncContainerNode(item));
+
+    return {
+      node,
+      containers,
+      dates,
+      view: {
+        ...state.logsView,
+        historyPreset: ['10m', '1h', '1d', 'range'].includes(String(state.logsView.historyPreset || ''))
+          ? String(state.logsView.historyPreset)
+          : '10m',
+        rangeStart: dates.includes(String(state.logsView.rangeStart || ''))
+          ? String(state.logsView.rangeStart)
+          : dates[Math.min(1, dates.length - 1)],
+        rangeEnd: dates.includes(String(state.logsView.rangeEnd || '')) ? String(state.logsView.rangeEnd) : dates[0],
+      },
     };
   }
 
@@ -3427,6 +3496,227 @@
     };
   }
 
+  function localDateValue(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  function recentLogDates(count = 4) {
+    const anchor = new Date();
+    anchor.setHours(0, 0, 0, 0);
+
+    return Array.from({ length: count }, (_item, index) => {
+      const date = new Date(anchor);
+      date.setDate(anchor.getDate() - index);
+      return localDateValue(date);
+    });
+  }
+
+  function formatLogDateLabel(value, dates = recentLogDates()) {
+    const normalized = String(value || '').trim();
+    if (!normalized) {
+      return '-';
+    }
+
+    if (normalized === dates[0]) {
+      return '今天';
+    }
+
+    if (normalized === dates[1]) {
+      return '昨天';
+    }
+
+    return normalized.slice(5).replace('-', '/');
+  }
+
+  function buildContainerLogEntries(node) {
+    syncContainerNode(node);
+    const container = node.containerConfig || {};
+    const status = compactStatusLabel(node.status) || 'running';
+    const image = String(container.image || DEFAULT_DEPLOY_IMAGE).trim();
+    const parsedImage = parseImageReference(image);
+    const port = String(
+      inferPortFromInput(container.startArgs || '') ||
+        inferPortFromInput(container.envVars || '') ||
+        ((node.details && node.details.port) || DEFAULT_DEPLOY_PORT),
+    ).trim();
+    const startCommand = String(container.startArgs || 'start.sh').trim();
+    const primaryEnv =
+      String(container.envVars || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)[0] || 'NODE_ENV=production';
+    const displayName = cardTitleForNode(node) || node.title || 'container';
+    const dateOptions = recentLogDates(4);
+    const timeSets = [
+      ['09:12:04', '09:12:08', '09:12:10', '09:12:15', '09:14:37', '09:18:02', '09:24:17'],
+      ['16:41:12', '16:41:16', '16:41:20', '16:41:26', '16:42:08', '16:45:49', '16:48:33'],
+      ['11:08:02', '11:08:08', '11:08:11', '11:08:21', '11:11:05', '11:14:41', '11:18:26'],
+      ['07:34:44', '07:34:49', '07:34:53', '07:35:01', '07:37:22', '07:41:10', '07:45:56'],
+    ];
+    const templatesByStatus = {
+      running: [
+        { level: 'INFO', stream: 'runtime', message: `pull image ${parsedImage.repository}:${parsedImage.tag}` },
+        { level: 'INFO', stream: 'env', message: `inject env ${primaryEnv}` },
+        { level: 'INFO', stream: 'app', message: `${startCommand} listening on 0.0.0.0:${port}` },
+        { level: 'INFO', stream: 'probe', message: 'startup probe passed' },
+        { level: 'INFO', stream: 'probe', message: 'readiness probe passed' },
+        { level: 'INFO', stream: 'http', message: 'GET /healthz 200 4ms' },
+        { level: 'INFO', stream: 'app', message: `${displayName} request batch completed successfully` },
+      ],
+      starting: [
+        { level: 'INFO', stream: 'runtime', message: `pulling image ${parsedImage.repository}:${parsedImage.tag}` },
+        { level: 'INFO', stream: 'env', message: `inject env ${primaryEnv}` },
+        { level: 'INFO', stream: 'app', message: `${startCommand} boot sequence on 0.0.0.0:${port}` },
+        { level: 'WARN', stream: 'probe', message: 'startup probe pending, waiting for dependencies' },
+        { level: 'WARN', stream: 'probe', message: 'readiness probe not ready yet' },
+        { level: 'INFO', stream: 'app', message: `warming ${displayName} runtime cache` },
+        { level: 'INFO', stream: 'runtime', message: 'tailing boot logs until service becomes ready' },
+      ],
+      stopping: [
+        { level: 'INFO', stream: 'runtime', message: `received stop signal for ${displayName}` },
+        { level: 'INFO', stream: 'http', message: 'draining incoming traffic' },
+        { level: 'WARN', stream: 'probe', message: 'readiness probe disabled during graceful shutdown' },
+        { level: 'INFO', stream: 'app', message: 'persisting in-flight worker state' },
+        { level: 'INFO', stream: 'runtime', message: 'terminating child processes' },
+        { level: 'INFO', stream: 'runtime', message: 'container will exit after graceful period' },
+        { level: 'INFO', stream: 'runtime', message: 'shutdown sequence in progress' },
+      ],
+      stopped: [
+        { level: 'INFO', stream: 'runtime', message: `container ${displayName} stopped` },
+        { level: 'INFO', stream: 'runtime', message: 'last exit code 0' },
+        { level: 'INFO', stream: 'runtime', message: 'no active probes' },
+        { level: 'INFO', stream: 'runtime', message: 'log snapshot retained for inspection' },
+        { level: 'INFO', stream: 'runtime', message: 'resource quota released' },
+        { level: 'INFO', stream: 'runtime', message: 'waiting for next manual start' },
+        { level: 'INFO', stream: 'runtime', message: `image ${parsedImage.repository}:${parsedImage.tag} remains cached` },
+      ],
+      unhealthy: [
+        { level: 'INFO', stream: 'runtime', message: `pull image ${parsedImage.repository}:${parsedImage.tag}` },
+        { level: 'INFO', stream: 'app', message: `${startCommand} listening on 0.0.0.0:${port}` },
+        { level: 'WARN', stream: 'probe', message: 'readiness probe degraded, retry in 10s' },
+        { level: 'ERROR', stream: 'app', message: 'database ping failed: connection timeout' },
+        { level: 'WARN', stream: 'runtime', message: 'container entered degraded mode' },
+        { level: 'ERROR', stream: 'probe', message: 'health check failed, marked unhealthy' },
+        { level: 'WARN', stream: 'runtime', message: 'backoff restart scheduled in 30s' },
+      ],
+    };
+    const templates = templatesByStatus[status] || templatesByStatus.running;
+
+    return dateOptions.flatMap((date, dayIndex) => {
+      const times = timeSets[dayIndex] || timeSets[timeSets.length - 1];
+      return templates.map((entry, lineIndex) => ({
+        id: `${node.id}-${date}-${lineIndex}`,
+        date,
+        time: times[lineIndex] || times[times.length - 1],
+        level: entry.level,
+        stream: entry.stream,
+        message: entry.message,
+      }));
+    });
+  }
+
+  function logEntryTimestamp(entry) {
+    const date = String((entry && entry.date) || '').trim();
+    const time = String((entry && entry.time) || '').trim() || '00:00:00';
+    const parsed = new Date(`${date}T${time}`);
+    return parsed.getTime();
+  }
+
+  function filteredContainerLogEntries(node, view) {
+    const dates = recentLogDates(4);
+    const mode = view && view.mode === 'history' ? 'history' : 'realtime';
+    const rawSearch = String((view && view.search) || '');
+    const query = rawSearch.trim().toLowerCase();
+    const historyPreset =
+      mode === 'history' && ['10m', '1h', '1d', 'range'].includes(String((view && view.historyPreset) || ''))
+        ? String(view.historyPreset)
+        : '10m';
+    const rangeStart =
+      mode === 'history' && dates.includes(String((view && view.rangeStart) || ''))
+        ? String(view.rangeStart)
+        : dates[Math.min(1, dates.length - 1)];
+    const rangeEnd =
+      mode === 'history' && dates.includes(String((view && view.rangeEnd) || '')) ? String(view.rangeEnd) : dates[0];
+    const allEntries = buildContainerLogEntries(node);
+    const latestTimestamp = allEntries.reduce((max, entry) => Math.max(max, logEntryTimestamp(entry)), 0);
+    const scopedEntries =
+      mode === 'realtime'
+        ? allEntries.filter((entry) => entry.date === dates[0])
+        : historyPreset === '10m'
+        ? allEntries.filter((entry) => latestTimestamp - logEntryTimestamp(entry) <= 10 * 60 * 1000)
+        : historyPreset === '1h'
+        ? allEntries.filter((entry) => latestTimestamp - logEntryTimestamp(entry) <= 60 * 60 * 1000)
+        : historyPreset === '1d'
+        ? allEntries.filter((entry) => latestTimestamp - logEntryTimestamp(entry) <= 24 * 60 * 60 * 1000)
+        : allEntries.filter((entry) => {
+            const lower = rangeStart <= rangeEnd ? rangeStart : rangeEnd;
+            const upper = rangeStart <= rangeEnd ? rangeEnd : rangeStart;
+            return entry.date >= lower && entry.date <= upper;
+          });
+    const filteredEntries = query
+      ? scopedEntries.filter((entry) =>
+          [entry.time, entry.level, entry.stream, entry.message].join(' ').toLowerCase().includes(query),
+        )
+      : scopedEntries;
+
+    return {
+      mode,
+      dates,
+      search: rawSearch,
+      historyPreset,
+      rangeStart,
+      rangeEnd,
+      entries: filteredEntries,
+      totalLines: scopedEntries.length,
+    };
+  }
+
+  function downloadTextFile(filename, text) {
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  function exportActiveContainerLogs() {
+    const context = activeLogContext();
+    if (!context || !state.logsView) {
+      return;
+    }
+
+    const { node, view } = context;
+    const { entries, historyPreset, mode, rangeStart, rangeEnd } = filteredContainerLogEntries(node, view);
+    const baseName = slugifyText(cardTitleForNode(node) || node.title || 'container');
+    const filename =
+      mode === 'realtime'
+        ? `${baseName}-realtime.log`
+        : historyPreset === 'range'
+        ? `${baseName}-${rangeStart}-${rangeEnd}.log`
+        : `${baseName}-${historyPreset}.log`;
+    const contents = entries.length
+      ? entries
+          .map(
+            (entry) =>
+              `[${entry.date} ${entry.time}] ${entry.level.padEnd(5, ' ')} ${entry.stream.padEnd(7, ' ')} ${entry.message}`,
+          )
+          .join('\n')
+      : `# ${baseName}\n# no log lines matched current filter`;
+
+    downloadTextFile(filename, contents);
+    state.logsView.notice = entries.length
+      ? `已导出 ${entries.length} 条日志到 ${filename}`
+      : `已导出空日志文件 ${filename}`;
+    renderCanvasWorkspace();
+  }
+
   function buildContainerEventsPayload(node) {
     syncContainerNode(node);
     const container = node.containerConfig || {};
@@ -3475,6 +3765,7 @@
 
   function clearNodeSideContexts() {
     closeDatabaseWorkspace();
+    closeLogWorkspace();
     closeEntryContext();
     closeContainerContext();
     closeDevboxContext();
@@ -3540,6 +3831,20 @@
 
     if (action === 'terminal') {
       openContainerTerminalWindow(node);
+      return;
+    }
+
+    if (action === 'log') {
+      state.selectedNodeId = node.id;
+      state.hoveredEdgeId = null;
+      state.selectedEdgeId = null;
+      closeProjectListView();
+      closeDatabaseWorkspace();
+      closeEntryContext();
+      closeDevboxContext();
+      openContainerContext(node.id);
+      openContainerLogsWorkspace(node.id);
+      renderAll();
       return;
     }
 
@@ -5313,6 +5618,7 @@
         state.hoveredEdgeId = null;
         state.selectedEdgeId = null;
         closeProjectListView();
+        closeLogWorkspace();
         if (supportsDatabaseWorkspace(node)) {
           openDatabaseWorkspace(node.id);
           closeEntryContext();
@@ -5391,6 +5697,7 @@
           state.selectedEdgeId = null;
           closeProjectListView();
           closeDatabaseWorkspace();
+          closeLogWorkspace();
           closeContainerContext();
           closeDevboxContext();
           openEntryContext(node.id);
@@ -5506,11 +5813,12 @@
     }
 
     const context = activeDatabaseContext();
+    const logContext = activeLogContext();
     const projectListOpen = Boolean(state.projectListOpen);
-    dom.canvasStage.classList.toggle('workspace-mode', Boolean(context) || projectListOpen);
-    dom.canvasStage.classList.toggle('project-list-mode', projectListOpen && !context);
+    dom.canvasStage.classList.toggle('workspace-mode', Boolean(context) || Boolean(logContext) || projectListOpen);
+    dom.canvasStage.classList.toggle('project-list-mode', projectListOpen && !context && !logContext);
 
-    if (projectListOpen && !context) {
+    if (projectListOpen && !context && !logContext) {
       const projects = collectProjectNodes();
       dom.canvasWorkspace.hidden = false;
       dom.canvasWorkspace.className = 'canvas-workspace active project-workspace';
@@ -5549,6 +5857,13 @@
             .join('')}
         </div>
       `;
+      return;
+    }
+
+    if (!context && logContext) {
+      dom.canvasWorkspace.hidden = false;
+      dom.canvasWorkspace.className = 'canvas-workspace active log-workspace';
+      dom.canvasWorkspace.innerHTML = renderContainerLogsWorkspace(logContext);
       return;
     }
 
@@ -5696,6 +6011,163 @@
           }
 
           ${tableContent}
+        </section>
+      </div>
+    `;
+  }
+
+  function renderContainerLogsWorkspace(context) {
+    const { node, containers, view, dates } = context;
+    const { entries, mode, search, historyPreset, rangeStart, rangeEnd } = filteredContainerLogEntries(node, view);
+    const title = cardTitleForNode(node) || node.title || 'Container';
+    const notice = String(view.notice || '').trim();
+    const showRangeInputs = mode === 'history' && historyPreset === 'range';
+
+    return `
+      <div class="db-workspace-header">
+        <div class="db-workspace-copy">
+          <h2 class="db-workspace-title">日志查看</h2>
+          <p class="db-workspace-subtitle">${escapeHtml(title)}</p>
+        </div>
+        <div class="db-workspace-actions">
+          <button
+            type="button"
+            class="db-ghost-button ${mode === 'realtime' ? 'active' : ''}"
+            data-log-action="set-mode"
+            data-log-mode="realtime"
+          >
+            实时日志
+          </button>
+          <button
+            type="button"
+            class="db-ghost-button ${mode === 'history' ? 'active' : ''}"
+            data-log-action="set-mode"
+            data-log-mode="history"
+          >
+            按日期
+          </button>
+          <button type="button" class="db-ghost-button" data-log-action="export-logs">导出日志</button>
+          <button type="button" class="db-ghost-button" data-log-action="close-workspace">返回画布</button>
+        </div>
+      </div>
+
+      <div class="db-workspace-body">
+        <aside class="db-nav">
+          <div class="db-nav-label">Containers</div>
+          <div class="db-database-list">
+            ${containers
+              .map((item) => {
+                return `
+                  <button
+                    type="button"
+                    class="db-database-button ${item.id === node.id ? 'active' : ''}"
+                    data-log-action="select-container"
+                    data-log-container-id="${item.id}"
+                  >
+                    <strong class="db-entity-label">
+                      <span class="log-container-icon">${iconMarkup('docker')}</span>
+                      <span>${escapeHtml(cardTitleForNode(item) || item.title || 'Container')}</span>
+                    </strong>
+                    <span>${escapeHtml(compactStatusLabel(item.status) || 'running')}</span>
+                  </button>
+                `;
+              })
+              .join('')}
+          </div>
+        </aside>
+
+        <section class="db-main">
+          <div class="log-toolbar">
+            <div class="log-filter-grid">
+              <label class="db-config-label">
+                <span>搜索关键字</span>
+                <input
+                  class="agui-input"
+                  type="text"
+                  value="${escapeHtml(search || '')}"
+                  placeholder="error / probe / health / orders"
+                  data-log-field="search"
+                />
+              </label>
+              ${
+                mode === 'history' && showRangeInputs
+                  ? `
+                    <div class="log-range-grid">
+                      <label class="db-config-label">
+                        <span>开始日期</span>
+                        <input
+                          class="agui-input"
+                          type="date"
+                          value="${escapeHtml(rangeStart)}"
+                          max="${escapeHtml(dates[0])}"
+                          data-log-field="rangeStart"
+                        />
+                      </label>
+                      <label class="db-config-label">
+                        <span>结束日期</span>
+                        <input
+                          class="agui-input"
+                          type="date"
+                          value="${escapeHtml(rangeEnd)}"
+                          max="${escapeHtml(dates[0])}"
+                          data-log-field="rangeEnd"
+                        />
+                      </label>
+                    </div>
+                  `
+                  : ''
+              }
+            </div>
+            ${
+              mode === 'history'
+                ? `
+                  <div class="log-date-row">
+                    ${[
+                      ['10m', '近10分钟'],
+                      ['1h', '近1小时'],
+                      ['1d', '近1天'],
+                      ['range', '日期区间'],
+                    ]
+                      .map(
+                        ([value, label]) => `
+                          <button
+                            type="button"
+                            class="db-tab-button ${historyPreset === value ? 'active' : ''}"
+                            data-log-action="select-history-preset"
+                            data-log-history-preset="${value}"
+                          >
+                            ${escapeHtml(label)}
+                          </button>
+                        `,
+                      )
+                      .join('')}
+                  </div>
+                `
+                : ''
+            }
+            ${notice ? `<div class="log-toolbar-status">${escapeHtml(notice)}</div>` : ''}
+          </div>
+
+          <div class="db-panel log-panel">
+            <div class="log-line-list">
+              ${
+                entries.length
+                  ? entries
+                      .map(
+                        (entry) => `
+                          <div class="log-line">
+                            <span class="log-line-time">${escapeHtml(entry.time)}</span>
+                            <span class="log-line-level ${escapeHtml(entry.level.toLowerCase())}">${escapeHtml(entry.level)}</span>
+                            <span class="log-line-stream">${escapeHtml(entry.stream)}</span>
+                            <span class="log-line-message">${escapeHtml(entry.message)}</span>
+                          </div>
+                        `,
+                      )
+                      .join('')
+                  : `<div class="log-empty-state">没有匹配到日志。请更换日期或搜索关键字。</div>`
+              }
+            </div>
+          </div>
         </section>
       </div>
     `;
@@ -7310,6 +7782,59 @@
           }
         }
 
+        const logButton = event.target.closest('[data-log-action]');
+        if (logButton && state.logsView) {
+          if (logButton.dataset.logAction === 'close-workspace') {
+            closeLogWorkspace();
+            renderAll();
+            return;
+          }
+
+          if (logButton.dataset.logAction === 'set-mode') {
+            state.logsView.mode = logButton.dataset.logMode === 'history' ? 'history' : 'realtime';
+            if (state.logsView.mode === 'history' && !['10m', '1h', '1d', 'range'].includes(String(state.logsView.historyPreset || ''))) {
+              state.logsView.historyPreset = '10m';
+            }
+            state.logsView.notice = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (logButton.dataset.logAction === 'select-history-preset') {
+            state.logsView.mode = 'history';
+            state.logsView.historyPreset = ['10m', '1h', '1d', 'range'].includes(String(logButton.dataset.logHistoryPreset || ''))
+              ? String(logButton.dataset.logHistoryPreset)
+              : '10m';
+            state.logsView.notice = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (logButton.dataset.logAction === 'select-container') {
+            const nextNode = getNodeById(logButton.dataset.logContainerId || '');
+            if (!nextNode || nextNode.type !== 'container') {
+              return;
+            }
+
+            state.selectedNodeId = nextNode.id;
+            state.hoveredEdgeId = null;
+            state.selectedEdgeId = null;
+            closeProjectListView();
+            closeDatabaseWorkspace();
+            closeEntryContext();
+            closeDevboxContext();
+            openContainerContext(nextNode.id);
+            openContainerLogsWorkspace(nextNode.id);
+            renderAll();
+            return;
+          }
+
+          if (logButton.dataset.logAction === 'export-logs') {
+            exportActiveContainerLogs();
+            return;
+          }
+        }
+
         const button = event.target.closest('[data-db-action]');
         if (!button || !state.databaseView) {
           return;
@@ -7384,6 +7909,35 @@
       });
 
       dom.canvasWorkspace.addEventListener('input', (event) => {
+        const logInput = event.target.closest('[data-log-field]');
+        if (logInput && state.logsView) {
+          if (logInput.dataset.logField === 'search') {
+            state.logsView.search = logInput.value;
+            state.logsView.notice = '';
+            renderCanvasWorkspace();
+            focusLogWorkspaceField('search');
+            return;
+          }
+
+          if (logInput.dataset.logField === 'rangeStart') {
+            state.logsView.mode = 'history';
+            state.logsView.historyPreset = 'range';
+            state.logsView.rangeStart = logInput.value || recentLogDates()[Math.min(1, recentLogDates().length - 1)];
+            state.logsView.notice = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (logInput.dataset.logField === 'rangeEnd') {
+            state.logsView.mode = 'history';
+            state.logsView.historyPreset = 'range';
+            state.logsView.rangeEnd = logInput.value || recentLogDates()[0];
+            state.logsView.notice = '';
+            renderCanvasWorkspace();
+            return;
+          }
+        }
+
         const configInput = event.target.closest('[data-db-config-field]');
         if (configInput && state.databaseView) {
           let nextValue = configInput.value;
@@ -7417,6 +7971,29 @@
       });
 
       dom.canvasWorkspace.addEventListener('change', (event) => {
+        const logInput = event.target.closest('[data-log-field]');
+        if (logInput && state.logsView) {
+          if (logInput.dataset.logField === 'search') {
+            state.logsView.search = logInput.value;
+          }
+
+          if (logInput.dataset.logField === 'rangeStart') {
+            state.logsView.mode = 'history';
+            state.logsView.historyPreset = 'range';
+            state.logsView.rangeStart = logInput.value || recentLogDates()[Math.min(1, recentLogDates().length - 1)];
+          }
+
+          if (logInput.dataset.logField === 'rangeEnd') {
+            state.logsView.mode = 'history';
+            state.logsView.historyPreset = 'range';
+            state.logsView.rangeEnd = logInput.value || recentLogDates()[0];
+          }
+
+          state.logsView.notice = '';
+          renderCanvasWorkspace();
+          return;
+        }
+
         const configInput = event.target.closest('[data-db-config-field]');
         if (configInput && state.databaseView) {
           state.databaseView.configDraft[configInput.dataset.dbConfigField] =
@@ -9119,6 +9696,7 @@
       Boolean(dom.canvasStage && dom.canvasWorld) &&
       !state.projectListOpen &&
       !Boolean(activeDatabaseContext()) &&
+      !Boolean(activeLogContext()) &&
       !Boolean(state.windowModal)
     );
   }
@@ -9268,6 +9846,7 @@
     state.selectedNodeId = node.id;
     closeProjectListView();
     closeDatabaseWorkspace();
+    closeLogWorkspace();
     closeEntryContext();
     closeContainerContext();
     closeDevboxContext();
@@ -9298,6 +9877,7 @@
 
     if (action === 'projects') {
       closeDatabaseWorkspace();
+      closeLogWorkspace();
       closeEntryContext();
       closeContainerContext();
       closeDevboxContext();
@@ -9587,6 +10167,21 @@
       const input = dom.chatLog.querySelector(`[data-agui-field="${field}"][data-message-id="${messageId}"]`);
       if (input) {
         input.focus();
+      }
+    }, 0);
+  }
+
+  function focusLogWorkspaceField(field) {
+    window.setTimeout(() => {
+      const input = dom.canvasWorkspace && dom.canvasWorkspace.querySelector(`[data-log-field="${field}"]`);
+      if (!input) {
+        return;
+      }
+
+      input.focus();
+      if (field === 'search' && typeof input.setSelectionRange === 'function') {
+        const length = input.value.length;
+        input.setSelectionRange(length, length);
       }
     }, 0);
   }

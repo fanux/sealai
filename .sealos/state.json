@@ -10,7 +10,7 @@
     "repo_name": "sealai",
     "url": "https://sealai-yjhjqxcq.sealosgzg.site",
     "deployed_at": "2026-04-01T07:26:22Z",
-    "last_updated_at": "2026-04-13T14:37:27Z"
+    "last_updated_at": "2026-04-14T13:20:29Z"
   },
   "history": [
     {
@@ -83,6 +83,15 @@
       "method": "kubectl-configmap-patch",
       "status": "success",
       "note": "Synced the latest Skills guide, external expand control, and unified database icon updates to the live Sealos app via ConfigMap patch; ingress returned HTTP 200 and remote app.js matched the new frontend code."
+    },
+    {
+      "at": "2026-04-14T13:20:29Z",
+      "action": "sync-public-assets",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "configmap": "sealai-ymwsyhbd-public",
+      "method": "kubectl-configmap-patch",
+      "status": "success",
+      "note": "Synced the latest chat-side image manager flow, hidden chat avatars, and wider chat panel to the live Sealos app via ConfigMap patch. Remote app.js, styles.css, and homepage HTML matched the updated frontend assets; rollout restart timed out while a replacement pod remained in ContainerCreating, but the live site continued serving the new public assets."
     }
   ]
 }
