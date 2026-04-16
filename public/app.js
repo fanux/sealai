@@ -372,6 +372,10 @@
     hoveredToolAction: '',
     hoveredToolMessageId: null,
     windowModal: null,
+    hoverExpand: {
+      nodeId: null,
+      timeoutId: 0,
+    },
   };
 
   let rafHandle = 0;
@@ -384,6 +388,7 @@
   const CONTAINER_CPU_OPTIONS = ['0.5', '1', '2', '4', '8', '16'];
   const CONTAINER_MEMORY_OPTIONS = ['512Mi', '1Gi', '2Gi', '4Gi', '8Gi', '16Gi', '32Gi'];
   const CONTAINER_DISK_OPTIONS = ['10Gi', '20Gi', '50Gi', '100Gi', '200Gi', '500Gi'];
+  const NODE_HOVER_EXPAND_DELAY_MS = 500;
   const DATABASE_REPLICA_OPTIONS = ['1', '2', '3', '5'];
   const DATABASE_CPU_OPTIONS = ['1', '2', '4', '8', '16'];
   const DATABASE_MEMORY_OPTIONS = ['2Gi', '4Gi', '8Gi', '16Gi', '32Gi'];
@@ -1373,6 +1378,8 @@
           image,
           templateId: String(item.templateId || '').trim() || 'nodejs',
           version: String(item.version || parseImageReference(image).tag || 'latest').trim(),
+          visibility: String(item.visibility || 'private').trim() === 'public' ? 'public' : 'private',
+          description: String(item.description || '').trim(),
           createdAt: String(item.createdAt || '刚刚').trim(),
           note: String(item.note || '').trim() || '由开发环境版本发布生成',
         };
@@ -1385,6 +1392,20 @@
       ...config,
       releaseHistory: normalizeImageHistory(config.releaseHistory, config.image).map((entry) => ({ ...entry })),
       publishedTemplates: normalizeDevboxPublishedTemplates(config.publishedTemplates).map((entry) => ({ ...entry })),
+      webCoding: normalizeDevboxWebCodingConfig(config.webCoding),
+    };
+  }
+
+  function normalizeDevboxWebCodingConfig(config = {}) {
+    return {
+      mode: String(config.mode || '').trim() === 'manual' ? 'manual' : 'auto',
+      enabled: Boolean(config.enabled),
+      autoKey: String(config.autoKey || '').trim(),
+      proxyBaseUrl: String(config.proxyBaseUrl || 'https://aiproxy.sealos.run/v1').trim(),
+      apiKey: String(config.apiKey || '').trim(),
+      baseUrl: String(config.baseUrl || '').trim(),
+      provider: String(config.provider || '').trim().toLowerCase() === 'anthropic' ? 'Anthropic' : 'OpenAI',
+      updatedAt: String(config.updatedAt || '').trim(),
     };
   }
 
@@ -1424,6 +1445,7 @@
       image,
       releaseHistory: normalizeImageHistory(options.releaseHistory, image),
       publishedTemplates: normalizeDevboxPublishedTemplates(options.publishedTemplates),
+      webCoding: normalizeDevboxWebCodingConfig(options.webCoding),
     };
   }
 
@@ -1452,6 +1474,7 @@
         image: details.image,
         releaseHistory: details.releaseHistory,
         publishedTemplates: details.publishedTemplates,
+        webCoding: details.webCoding,
         title: node.title,
       }),
       ...(node.devboxConfig || {}),
@@ -1514,6 +1537,7 @@
       image: nextConfig.image,
       releaseHistory: nextConfig.releaseHistory,
       publishedTemplates: nextConfig.publishedTemplates,
+      webCoding: nextConfig.webCoding,
     };
 
     return node;
@@ -2382,6 +2406,45 @@
     };
   }
 
+  function normalizeDevboxFocusSection(section) {
+    return ['ide', 'start', 'workspace', 'port', 'resources'].includes(String(section || '').trim())
+      ? String(section || '').trim()
+      : 'ide';
+  }
+
+  function clearNodeHoverExpand() {
+    if (state.hoverExpand.timeoutId) {
+      window.clearTimeout(state.hoverExpand.timeoutId);
+    }
+    state.hoverExpand.nodeId = null;
+    state.hoverExpand.timeoutId = 0;
+  }
+
+  function scheduleNodeHoverExpand(nodeId) {
+    if (!nodeId) {
+      clearNodeHoverExpand();
+      return;
+    }
+
+    if (state.hoverExpand.nodeId === nodeId && state.hoverExpand.timeoutId) {
+      return;
+    }
+
+    clearNodeHoverExpand();
+    state.hoverExpand.nodeId = nodeId;
+    state.hoverExpand.timeoutId = window.setTimeout(() => {
+      const node = getNodeById(nodeId);
+      state.hoverExpand.nodeId = null;
+      state.hoverExpand.timeoutId = 0;
+      if (!node || node.expanded || state.dragging || state.linking || state.canvasViewport.panningPointerId !== null) {
+        return;
+      }
+
+      node.expanded = true;
+      renderAll();
+    }, NODE_HOVER_EXPAND_DELAY_MS);
+  }
+
   function openDevboxContext(nodeId, options = {}) {
     const node = getNodeById(nodeId);
     if (!node || node.type !== 'devbox') {
@@ -2402,6 +2465,12 @@
       error: current ? current.error : '',
       info: current ? current.info : '',
       page,
+      focusSection:
+        options.focusSection !== undefined
+          ? normalizeDevboxFocusSection(options.focusSection)
+          : current
+          ? normalizeDevboxFocusSection(current.focusSection)
+          : 'ide',
       releaseId:
         options.releaseId ||
         (current && current.releaseId && history.some((entry) => entry.id === current.releaseId) ? current.releaseId : defaultReleaseId),
@@ -2413,6 +2482,25 @@
           : suggestDevboxReleaseTag(node.devboxConfig),
       releaseInfo: current ? current.releaseInfo || '' : '',
       releaseError: current ? current.releaseError || '' : '',
+      templatePublishOpen: current ? Boolean(current.templatePublishOpen) : false,
+      templatePublishTargetId:
+        options.templatePublishTargetId !== undefined
+          ? String(options.templatePublishTargetId || '')
+          : current
+          ? String(current.templatePublishTargetId || '')
+          : '',
+      templateVisibility:
+        options.templateVisibility !== undefined
+          ? String(options.templateVisibility || '')
+          : current
+          ? String(current.templateVisibility || '')
+          : 'private',
+      templateDescription:
+        options.templateDescription !== undefined
+          ? String(options.templateDescription || '')
+          : current
+          ? String(current.templateDescription || '')
+          : '',
     };
   }
 
@@ -2455,6 +2543,15 @@
     if (!String(context.view.releaseDraft || '').trim()) {
       context.view.releaseDraft = suggestDevboxReleaseTag(context.devbox);
     }
+    if (!['public', 'private'].includes(String(context.view.templateVisibility || ''))) {
+      context.view.templateVisibility = 'private';
+    }
+    if (
+      !context.view.templatePublishTargetId ||
+      !history.some((entry) => entry.id === context.view.templatePublishTargetId)
+    ) {
+      context.view.templatePublishTargetId = release ? release.id : '';
+    }
 
     return {
       ...context,
@@ -2468,6 +2565,11 @@
   function renderDevboxVersionWorkspace(context) {
     const { node, devbox, view, template, history, release, templates } = context;
     const draftTag = String(view.releaseDraft || suggestDevboxReleaseTag(devbox)).trim();
+    const publishTarget =
+      history.find((entry) => entry.id === (view.templatePublishTargetId || '')) ||
+      release ||
+      history[0] ||
+      null;
     const statusClass = view.releaseError ? 'error' : view.releaseInfo ? 'saved' : '';
     const statusText = view.releaseError
       ? view.releaseError
@@ -2543,19 +2645,15 @@
             </div>
           </div>
 
-          <div class="db-chip-row">
-            <span class="db-chip">${escapeHtml(compactStatusLabel(node.status) || 'running')}</span>
-            <span class="db-chip">${escapeHtml(`${devbox.workingDir || '/workspace'}`)}</span>
-            <span class="db-chip">${escapeHtml(`${String(devbox.port || DEFAULT_DEPLOY_PORT).replace(/\/tcp$/i, '')}/TCP`)}</span>
-          </div>
-
           <section class="floating-window-section">
             <div class="floating-window-section-head">
               <strong>镜像地址</strong>
               <span>${escapeHtml(release ? release.createdAt || '' : '')}</span>
             </div>
-            <div class="image-current-chip">${escapeHtml(release ? release.image : devbox.image || '')}</div>
-            <div class="devbox-release-actions">
+            <div class="devbox-release-image-row">
+              <div class="image-current-chip devbox-release-image-chip">${escapeHtml(
+                release ? release.image : devbox.image || '',
+              )}</div>
               <button
                 type="button"
                 class="db-ghost-button"
@@ -2563,6 +2661,8 @@
               >
                 复制镜像地址
               </button>
+            </div>
+            <div class="devbox-release-actions">
               <button
                 type="button"
                 class="db-primary-button"
@@ -2582,26 +2682,59 @@
             </div>
           </section>
 
-          <section class="floating-window-section">
-            <div class="floating-window-section-head">
-              <strong>运行配置</strong>
-              <span>版本发布后可继续用于部署或模板化。</span>
-            </div>
-            <div class="devbox-key-grid compact">
-              <div class="devbox-key-item">
-                <span>启动命令</span>
-                <strong>${escapeHtml(devbox.startCommand || 'sleep infinity')}</strong>
-              </div>
-              <div class="devbox-key-item">
-                <span>工作目录</span>
-                <strong>${escapeHtml(devbox.workingDir || '/workspace')}</strong>
-              </div>
-              <div class="devbox-key-item">
-                <span>监听端口</span>
-                <strong>${escapeHtml(`${String(devbox.port || DEFAULT_DEPLOY_PORT).replace(/\/tcp$/i, '')}/TCP`)}</strong>
-              </div>
-            </div>
-          </section>
+          ${
+            view.templatePublishOpen
+              ? `
+                <section class="floating-window-section">
+                  <div class="floating-window-section-head">
+                    <strong>发布 Template</strong>
+                    <span>${escapeHtml(publishTarget ? publishTarget.tag || 'latest' : '')}</span>
+                  </div>
+                  <div class="devbox-template-publish-form">
+                    <div class="devbox-template-visibility">
+                      <button
+                        type="button"
+                        class="db-ghost-button ${view.templateVisibility === 'private' ? 'active' : ''}"
+                        data-devbox-workspace-action="set-template-visibility"
+                        data-devbox-template-visibility="private"
+                      >
+                        私有
+                      </button>
+                      <button
+                        type="button"
+                        class="db-ghost-button ${view.templateVisibility === 'public' ? 'active' : ''}"
+                        data-devbox-workspace-action="set-template-visibility"
+                        data-devbox-template-visibility="public"
+                      >
+                        公开
+                      </button>
+                    </div>
+                    <label class="db-config-label">
+                      <span>描述</span>
+                      <textarea
+                        class="agui-textarea devbox-template-description"
+                        data-devbox-release-field="templateDescription"
+                        placeholder="补充这个 Template 的用途、适用项目或初始化说明"
+                      >${escapeHtml(view.templateDescription || '')}</textarea>
+                    </label>
+                    <div class="devbox-release-actions">
+                      <button type="button" class="db-ghost-button" data-devbox-workspace-action="cancel-publish-template">
+                        取消
+                      </button>
+                      <button
+                        type="button"
+                        class="db-primary-button"
+                        data-devbox-workspace-action="submit-publish-template"
+                        data-devbox-release-id="${escapeHtml(publishTarget ? publishTarget.id : '')}"
+                      >
+                        发布 Template
+                      </button>
+                    </div>
+                  </div>
+                </section>
+              `
+              : ''
+          }
 
           <section class="floating-window-section">
             <div class="floating-window-section-head">
@@ -2616,8 +2749,13 @@
                         (item) => `
                           <div class="devbox-template-publish-item">
                             <div class="devbox-template-publish-copy">
-                              <strong>${escapeHtml(item.name)}</strong>
-                              <span>${escapeHtml(item.note || '')}</span>
+                              <div class="devbox-template-publish-meta">
+                                <strong>${escapeHtml(item.name)}</strong>
+                                <span class="devbox-template-visibility-badge ${item.visibility === 'public' ? 'public' : 'private'}">
+                                  ${escapeHtml(item.visibility === 'public' ? '公开' : '私有')}
+                                </span>
+                              </div>
+                              <span>${escapeHtml(item.description || item.note || '')}</span>
                             </div>
                             <div class="devbox-template-publish-actions">
                               <button type="button" class="db-ghost-button" data-copy-value="${escapeHtml(item.image)}">复制镜像</button>
@@ -3826,14 +3964,18 @@
       return;
     }
 
+    const visibility = String(context.view.templateVisibility || '').trim() === 'public' ? 'public' : 'private';
+    const description = String(context.view.templateDescription || '').trim();
     const nextTemplate = {
       id: createId('tmpl'),
       name: `${cardTitleForNode(context.node) || context.node.title} ${target.tag}`,
       image: target.image,
       templateId: context.devbox.templateId,
       version: target.tag,
+      visibility,
+      description,
       createdAt: '刚刚',
-      note: '可基于该 Template 创建新的开发环境',
+      note: visibility === 'public' ? '公开 Template，可基于它创建新的开发环境' : '私有 Template，仅当前项目可见',
     };
     const existing = normalizeDevboxPublishedTemplates(context.devbox.publishedTemplates).filter(
       (item) => item.image !== target.image,
@@ -3848,6 +3990,10 @@
       state.devboxView.configDraft = cloneDevboxConfig(context.node.devboxConfig);
       state.devboxView.info = `已将 ${target.tag} 发布为 Template`;
       state.devboxView.error = '';
+      state.devboxView.templatePublishOpen = false;
+      state.devboxView.templatePublishTargetId = '';
+      state.devboxView.templateVisibility = 'private';
+      state.devboxView.templateDescription = '';
     }
     context.view.releaseError = '';
     context.view.releaseInfo = `已将 ${target.tag} 发布为 Template`;
@@ -4788,6 +4934,135 @@
     renderAll();
   }
 
+  function buildDevboxWebCodingPayload(node) {
+    if (!node || node.type !== 'devbox') {
+      return {};
+    }
+
+    syncDevboxNode(node);
+    const webCoding = normalizeDevboxWebCodingConfig(node.devboxConfig && node.devboxConfig.webCoding);
+    const defaultStatus = webCoding.enabled
+      ? webCoding.mode === 'auto'
+        ? `当前已启用完全自动配置${webCoding.updatedAt ? ` · ${webCoding.updatedAt}` : ''}`
+        : `当前已保存手动配置${webCoding.updatedAt ? ` · ${webCoding.updatedAt}` : ''}`
+      : '选择 Vibe Coding 的配置方式。';
+
+    return {
+      nodeId: node.id,
+      mode: webCoding.mode,
+      enabled: webCoding.enabled,
+      autoKey: webCoding.autoKey,
+      proxyBaseUrl: webCoding.proxyBaseUrl,
+      apiKey: webCoding.apiKey,
+      baseUrl: webCoding.baseUrl,
+      provider: webCoding.provider,
+      updatedAt: webCoding.updatedAt,
+      error: '',
+      statusText: defaultStatus,
+    };
+  }
+
+  function pushDevboxWebCodingMessage(node) {
+    if (!node || node.type !== 'devbox') {
+      return null;
+    }
+
+    const payload = buildDevboxWebCodingPayload(node);
+    const lastMessage = state.messages[state.messages.length - 1];
+    if (
+      lastMessage &&
+      lastMessage.kind === 'agui' &&
+      lastMessage.ui === 'devbox-web-coding' &&
+      lastMessage.payload &&
+      lastMessage.payload.nodeId === node.id
+    ) {
+      lastMessage.payload = {
+        ...lastMessage.payload,
+        ...payload,
+      };
+      return lastMessage;
+    }
+
+    const message = {
+      id: createId('msg'),
+      role: 'assistant',
+      kind: 'agui',
+      ui: 'devbox-web-coding',
+      payload,
+    };
+    state.messages.push(message);
+    return message;
+  }
+
+  function saveDevboxWebCodingFromAgui(messageId) {
+    const message = getMessageById(messageId);
+    if (!message || message.kind !== 'agui' || message.ui !== 'devbox-web-coding') {
+      return;
+    }
+
+    const node = getNodeById(message.payload && message.payload.nodeId);
+    if (!node || node.type !== 'devbox') {
+      message.payload.error = '开发环境不存在，无法保存 Vibe Coding 配置。';
+      message.payload.statusText = '';
+      renderChat();
+      return;
+    }
+
+    const mode = String(message.payload.mode || '').trim() === 'manual' ? 'manual' : 'auto';
+    const provider = String(message.payload.provider || '').trim().toLowerCase() === 'anthropic' ? 'Anthropic' : 'OpenAI';
+    const baseUrl = String(message.payload.baseUrl || '').trim();
+    const apiKey = String(message.payload.apiKey || '').trim();
+    const proxyBaseUrl = String(message.payload.proxyBaseUrl || 'https://aiproxy.sealos.run/v1').trim();
+    const autoKey =
+      String(message.payload.autoKey || '').trim() ||
+      `${slugifyText(cardTitleForNode(node) || node.title || node.id) || 'workspace'}-web-coding-key`;
+
+    if (mode === 'manual' && (!apiKey || !baseUrl)) {
+      message.payload.error = '手动配置需要填写 API Key 和 Base URL。';
+      message.payload.statusText = '';
+      renderChat();
+      return;
+    }
+
+    node.devboxConfig = {
+      ...node.devboxConfig,
+      webCoding: normalizeDevboxWebCodingConfig(
+        mode === 'manual'
+          ? {
+              mode,
+              enabled: true,
+              apiKey,
+              baseUrl,
+              provider,
+              updatedAt: '刚刚',
+            }
+          : {
+              mode,
+              enabled: true,
+              autoKey,
+              proxyBaseUrl,
+              provider: 'OpenAI',
+              updatedAt: '刚刚',
+            },
+      ),
+    };
+    syncDevboxNode(node);
+
+    if (state.devboxView && state.devboxView.nodeId === node.id) {
+      state.devboxView.configDraft = cloneDevboxConfig(node.devboxConfig);
+    }
+
+    message.payload = {
+      ...buildDevboxWebCodingPayload(node),
+      statusText:
+        mode === 'manual'
+          ? `已保存手动配置，将通过 ${provider} 连接 ${baseUrl}。`
+          : '已启用完全自动配置，将通过 Sealos AI Proxy 自动创建 key 并代理模型。',
+      error: '',
+    };
+    renderAll();
+  }
+
   function openDevboxActionMessage(node, action) {
     if (!node || node.type !== 'devbox') {
       return;
@@ -4808,10 +5083,17 @@
     closeContainerContext();
     openDevboxContext(node.id, {
       page: action === 'version-manager' ? 'versions' : 'config',
+      focusSection: action === 'metrics' ? 'resources' : 'ide',
     });
 
     if (action === 'version-manager') {
-      pushNodeConfigMessage(node);
+      pushNodeConfigMessage(node, { section: 'ide' });
+      renderAll();
+      return;
+    }
+
+    if (action === 'web-coding') {
+      pushDevboxWebCodingMessage(node);
       renderAll();
       return;
     }
@@ -5942,12 +6224,19 @@
     return '';
   }
 
-  function pushNodeConfigMessage(node) {
+  function pushNodeConfigMessage(node, options = {}) {
     const ui = configUiForNode(node);
     if (!ui) {
       state.activeConfigMessageId = null;
       return null;
     }
+
+    const extraPayload =
+      node && node.type === 'devbox'
+        ? {
+            section: normalizeDevboxFocusSection(options.section),
+          }
+        : {};
 
     const lastMessage = state.messages[state.messages.length - 1];
     if (
@@ -5957,6 +6246,10 @@
       lastMessage.payload &&
       lastMessage.payload.nodeId === node.id
     ) {
+      lastMessage.payload = {
+        ...lastMessage.payload,
+        ...extraPayload,
+      };
       state.activeConfigMessageId = lastMessage.id;
       return lastMessage;
     }
@@ -5968,6 +6261,7 @@
       ui,
       payload: {
         nodeId: node.id,
+        ...extraPayload,
       },
     };
     state.messages.push(message);
@@ -6708,7 +7002,8 @@
         }
       `;
 
-      const activateNode = () => {
+      const activateNode = (options = {}) => {
+        const devboxSection = normalizeDevboxFocusSection(options.devboxSection);
         state.selectedNodeId = node.id;
         state.hoveredEdgeId = null;
         state.selectedEdgeId = null;
@@ -6733,7 +7028,7 @@
           closeDatabaseWorkspace();
           closeEntryContext();
           closeContainerContext();
-          openDevboxContext(node.id);
+          openDevboxContext(node.id, { focusSection: devboxSection });
         } else {
           closeDatabaseWorkspace();
           closeEntryContext();
@@ -6741,11 +7036,13 @@
           closeDevboxContext();
           state.activeConfigMessageId = null;
         }
-        pushNodeConfigMessage(node);
+        pushNodeConfigMessage(node, node.type === 'devbox' ? { section: devboxSection } : {});
         renderAll();
       };
 
       card.addEventListener('click', async (event) => {
+        clearNodeHoverExpand();
+
         if (event.target.closest('[data-node-link-handle]')) {
           return;
         }
@@ -6777,6 +7074,14 @@
           event.preventDefault();
           event.stopPropagation();
           openDevboxActionMessage(node, actionTarget.dataset.nodeAction || 'metrics');
+          return;
+        }
+
+        const devboxFocusTarget = event.target.closest('[data-node-devbox-focus]');
+        if (devboxFocusTarget && node.type === 'devbox') {
+          event.preventDefault();
+          event.stopPropagation();
+          activateNode({ devboxSection: devboxFocusTarget.dataset.nodeDevboxFocus || 'ide' });
           return;
         }
 
@@ -6822,10 +7127,12 @@
           return;
         }
 
-        activateNode();
+        activateNode({ devboxSection: node.type === 'devbox' ? 'ide' : '' });
       });
 
       card.addEventListener('pointerdown', (event) => {
+        clearNodeHoverExpand();
+
         if (event.button !== 0) {
           return;
         }
@@ -6888,7 +7195,22 @@
         scheduleEdgeRender();
       });
 
+      card.addEventListener('pointerenter', () => {
+        if (isExpanded || state.dragging || state.linking || state.canvasViewport.panningPointerId !== null) {
+          return;
+        }
+        scheduleNodeHoverExpand(node.id);
+      });
+
+      card.addEventListener('pointerleave', () => {
+        if (state.hoverExpand.nodeId === node.id) {
+          clearNodeHoverExpand();
+        }
+      });
+
       card.addEventListener('pointerup', (event) => {
+        clearNodeHoverExpand();
+
         if (!state.dragging || state.dragging.nodeId !== node.id) {
           return;
         }
@@ -6909,6 +7231,8 @@
       });
 
       card.addEventListener('pointercancel', () => {
+        clearNodeHoverExpand();
+
         if (!state.dragging || state.dragging.nodeId !== node.id) {
           return;
         }
@@ -7392,6 +7716,226 @@
     `;
   }
 
+  function devboxConfigDraftSnapshot(devbox, configDraft) {
+    const draft = {
+      ...devbox,
+      ...(configDraft || {}),
+      cpu: String((((configDraft || {}).cpu || devbox.cpu) || '')).trim(),
+      memory: String((((configDraft || {}).memory || devbox.memory) || '')).trim(),
+      diskSize: String((((configDraft || {}).diskSize || devbox.diskSize) || '')).trim(),
+      diskUsed: String((((configDraft || {}).diskUsed || devbox.diskUsed) || '')).trim(),
+      startCommand: String((((configDraft || {}).startCommand || devbox.startCommand) || '')).trim(),
+      workingDir: String((((configDraft || {}).workingDir || devbox.workingDir) || '')).trim(),
+      port: String((((configDraft || {}).port || devbox.port) || '')).trim().replace(/\/tcp$/i, ''),
+    };
+
+    return draft;
+  }
+
+  function renderDevboxIdeSection() {
+    return `
+      <section class="db-config-section">
+        <div class="db-config-copy">优先通过本地 IDE 直接连接当前开发环境。</div>
+        <div class="devbox-ide-grid">
+          ${DEVBOX_IDE_CLIENTS.map(
+            (ide) => `
+              <div class="devbox-ide-item">
+                <span class="devbox-ide-icon" style="--ide-accent:${ide.accent};">${escapeHtml(ide.mark)}</span>
+                <div class="devbox-ide-copy">
+                  <strong>${escapeHtml(ide.name)}</strong>
+                  <span>${escapeHtml(`${ide.note} · 连接当前开发环境`)}</span>
+                </div>
+              </div>
+            `,
+          ).join('')}
+        </div>
+        <div class="devbox-connect-hint">推荐先打开 VS Code、Cursor、Windsurf 或 JetBrains，再通过 Remote SSH / Gateway 连接当前开发环境。</div>
+      </section>
+    `;
+  }
+
+  function renderDevboxStartSection(draft, options = {}) {
+    const disabledAttr = options.disabled ? 'disabled' : '';
+    return `
+      <section class="db-config-section">
+        <div class="db-config-copy">启动命令、工作目录和端口配置。</div>
+        <div class="devbox-command-row">
+          <input
+            class="agui-input"
+            type="text"
+            value="${escapeHtml(draft.startCommand || '')}"
+            data-devbox-config-field="startCommand"
+            placeholder="pnpm dev --host 0.0.0.0 --port 3000"
+            ${disabledAttr}
+          />
+          <button type="button" class="db-primary-button" data-devbox-config-action="start" ${disabledAttr}>启动</button>
+        </div>
+        <div class="devbox-primary-grid">
+          <label class="db-config-label">
+            <span>Workspace</span>
+            <input
+              class="agui-input"
+              type="text"
+              value="${escapeHtml(draft.workingDir || '')}"
+              data-devbox-config-field="workingDir"
+              placeholder="/workspace/app"
+              ${disabledAttr}
+            />
+          </label>
+          <label class="db-config-label">
+            <span>端口号</span>
+            <input
+              class="agui-input"
+              type="text"
+              value="${escapeHtml(draft.port || '')}"
+              data-devbox-config-field="port"
+              placeholder="${escapeHtml(DEFAULT_DEPLOY_PORT)}"
+              ${disabledAttr}
+            />
+          </label>
+        </div>
+      </section>
+    `;
+  }
+
+  function renderDevboxWorkspaceSection(draft, options = {}) {
+    const disabledAttr = options.disabled ? 'disabled' : '';
+    return `
+      <section class="db-config-section">
+        <div class="db-config-copy">工作空间 / 工作目录。</div>
+        <label class="db-config-label">
+          <span>Workspace</span>
+          <input
+            class="agui-input"
+            type="text"
+            value="${escapeHtml(draft.workingDir || '')}"
+            data-devbox-config-field="workingDir"
+            placeholder="/workspace/app"
+            ${disabledAttr}
+          />
+        </label>
+      </section>
+    `;
+  }
+
+  function renderDevboxPortSection(draft, options = {}) {
+    const disabledAttr = options.disabled ? 'disabled' : '';
+    return `
+      <section class="db-config-section">
+        <div class="db-config-copy">监听端口。</div>
+        <label class="db-config-label">
+          <span>Port</span>
+          <input
+            class="agui-input"
+            type="text"
+            value="${escapeHtml(draft.port || '')}"
+            data-devbox-config-field="port"
+            placeholder="${escapeHtml(DEFAULT_DEPLOY_PORT)}"
+            ${disabledAttr}
+          />
+        </label>
+      </section>
+    `;
+  }
+
+  function renderDevboxResourcesSection(draft, options = {}) {
+    const disabled = Boolean(options.disabled);
+    return `
+      <section class="db-config-section">
+        <div class="db-config-copy">资源调整。</div>
+        <div class="container-slider-grid">
+          ${renderSliderField({
+            label: 'CPU',
+            field: 'cpu',
+            valueText: `${draft.cpu || '4'} Core`,
+            valueIndex: devboxSliderIndex('cpu', draft.cpu || '4'),
+            maxIndex: DEVBOX_CPU_OPTIONS.length - 1,
+            minLabel: DEVBOX_CPU_OPTIONS[0],
+            maxLabel: DEVBOX_CPU_OPTIONS[DEVBOX_CPU_OPTIONS.length - 1],
+            disabled,
+            dataFieldAttr: 'data-devbox-config-field',
+          })}
+          ${renderSliderField({
+            label: '内存',
+            field: 'memory',
+            valueText: draft.memory || '8Gi',
+            valueIndex: devboxSliderIndex('memory', draft.memory || '8Gi'),
+            maxIndex: DEVBOX_MEMORY_OPTIONS.length - 1,
+            minLabel: DEVBOX_MEMORY_OPTIONS[0],
+            maxLabel: DEVBOX_MEMORY_OPTIONS[DEVBOX_MEMORY_OPTIONS.length - 1],
+            disabled,
+            dataFieldAttr: 'data-devbox-config-field',
+          })}
+        </div>
+        <div class="container-slider-grid container-slider-grid-single">
+          ${renderSliderField({
+            label: '磁盘',
+            field: 'diskSize',
+            valueText: draft.diskSize || '50Gi',
+            valueIndex: devboxSliderIndex('diskSize', draft.diskSize || '50Gi'),
+            maxIndex: DEVBOX_DISK_OPTIONS.length - 1,
+            minLabel: DEVBOX_DISK_OPTIONS[0],
+            maxLabel: DEVBOX_DISK_OPTIONS[DEVBOX_DISK_OPTIONS.length - 1],
+            disabled,
+            dataFieldAttr: 'data-devbox-config-field',
+          })}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderDevboxFocusedSections(draft, section, options = {}) {
+    const focusSection = normalizeDevboxFocusSection(section);
+    if (focusSection === 'start') {
+      return renderDevboxStartSection(draft, options);
+    }
+    if (focusSection === 'workspace') {
+      return renderDevboxWorkspaceSection(draft, options);
+    }
+    if (focusSection === 'port') {
+      return renderDevboxPortSection(draft, options);
+    }
+    if (focusSection === 'resources') {
+      return renderDevboxResourcesSection(draft, options);
+    }
+    return renderDevboxIdeSection();
+  }
+
+  function renderDevboxConfigCard(node, draft, template, options = {}) {
+    const section = normalizeDevboxFocusSection(options.section);
+    const statusText = String(options.statusText || '').trim();
+    const statusClass = String(options.statusClass || '').trim();
+    const showSave = Boolean(options.showSave) && section !== 'ide';
+    const showStatus = Boolean(statusText) && section !== 'ide';
+    const disabled = Boolean(options.disabled);
+
+    return `
+      <div class="db-config-card${options.cardClass ? ` ${escapeHtml(options.cardClass)}` : ''}"${
+        options.messageId ? ` data-config-message-id="${escapeHtml(options.messageId)}"` : ''
+      }>
+        <div class="db-config-header">
+          <div>
+            <strong>${escapeHtml(`${cardTitleForNode(node) || 'Workspace'} 开发环境`)}</strong>
+          </div>
+          <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
+        </div>
+
+        ${renderDevboxFocusedSections(draft, section, { disabled })}
+
+        ${
+          showStatus || showSave
+            ? `
+              <div class="db-config-footer">
+                <div class="db-config-status ${statusClass}">${escapeHtml(showStatus ? statusText : '')}</div>
+                ${showSave ? '<button type="button" class="db-primary-button" data-devbox-config-action="save">保存配置</button>' : ''}
+              </div>
+            `
+            : ''
+        }
+      </div>
+    `;
+  }
+
   function renderSidebarContext() {
     if (!dom.chatTitle || !dom.chatContext || !dom.chatInput) {
       return;
@@ -7759,16 +8303,7 @@
     const devboxContext = activeDevboxContext();
     if (devboxContext) {
       const { node, devbox, view } = devboxContext;
-      const draft = {
-        ...devbox,
-        ...(view.configDraft || {}),
-        cpu: String(((view.configDraft && view.configDraft.cpu) || devbox.cpu) || '').trim(),
-        memory: String(((view.configDraft && view.configDraft.memory) || devbox.memory) || '').trim(),
-        diskSize: String(((view.configDraft && view.configDraft.diskSize) || devbox.diskSize) || '').trim(),
-        startCommand: String(((view.configDraft && view.configDraft.startCommand) || devbox.startCommand) || '').trim(),
-        workingDir: String(((view.configDraft && view.configDraft.workingDir) || devbox.workingDir) || '').trim(),
-        port: String(((view.configDraft && view.configDraft.port) || devbox.port) || '').trim().replace(/\/tcp$/i, ''),
-      };
+      const draft = devboxConfigDraftSnapshot(devbox, view.configDraft || {});
       const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
       const changed = devboxConfigChanged(node, draft);
       const statusClass = view.error ? 'error' : changed ? 'pending' : view.saveState === 'done' ? 'saved' : '';
@@ -7784,98 +8319,13 @@
       dom.chatContext.hidden = false;
       dom.chatContext.className = 'chat-context active';
       dom.chatInput.placeholder = '继续描述开发环境模板、资源规格或启动命令';
-      dom.chatContext.innerHTML = `
-        <div class="db-config-card">
-          <div class="db-config-header">
-            <div>
-              <strong>${escapeHtml(`${cardTitleForNode(node) || 'Workspace'} 开发环境`)}</strong>
-            </div>
-            <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
-          </div>
-
-          <section class="db-config-section">
-            <div class="db-config-copy">启动命令、工作目录和监听端口是开发环境的核心信息。</div>
-            <div class="devbox-command-row">
-              <input
-                class="agui-input"
-                type="text"
-                value="${escapeHtml(draft.startCommand || '')}"
-                data-devbox-config-field="startCommand"
-                placeholder="pnpm dev --host 0.0.0.0 --port 3000"
-              />
-              <button type="button" class="db-primary-button" data-devbox-config-action="start">启动</button>
-            </div>
-            <div class="devbox-primary-grid">
-              <label class="db-config-label">
-                <span>工作空间 / 工作目录</span>
-                <input
-                  class="agui-input"
-                  type="text"
-                  value="${escapeHtml(draft.workingDir || '')}"
-                  data-devbox-config-field="workingDir"
-                  placeholder="/workspace/app"
-                />
-              </label>
-              <label class="db-config-label">
-                <span>监听端口</span>
-                <input
-                  class="agui-input"
-                  type="text"
-                  value="${escapeHtml(draft.port || '')}"
-                  data-devbox-config-field="port"
-                  placeholder="${escapeHtml(DEFAULT_DEPLOY_PORT)}"
-                />
-              </label>
-            </div>
-          </section>
-
-          <section class="db-config-section">
-            <div class="db-config-copy">资源规则。</div>
-            <div class="container-slider-grid">
-              ${renderSliderField({
-                label: 'CPU',
-                field: 'cpu',
-                valueText: `${draft.cpu || '4'} Core`,
-                valueIndex: devboxSliderIndex('cpu', draft.cpu || '4'),
-                maxIndex: DEVBOX_CPU_OPTIONS.length - 1,
-                minLabel: DEVBOX_CPU_OPTIONS[0],
-                maxLabel: DEVBOX_CPU_OPTIONS[DEVBOX_CPU_OPTIONS.length - 1],
-                disabled: false,
-                dataFieldAttr: 'data-devbox-config-field',
-              })}
-              ${renderSliderField({
-                label: '内存',
-                field: 'memory',
-                valueText: draft.memory || '8Gi',
-                valueIndex: devboxSliderIndex('memory', draft.memory || '8Gi'),
-                maxIndex: DEVBOX_MEMORY_OPTIONS.length - 1,
-                minLabel: DEVBOX_MEMORY_OPTIONS[0],
-                maxLabel: DEVBOX_MEMORY_OPTIONS[DEVBOX_MEMORY_OPTIONS.length - 1],
-                disabled: false,
-                dataFieldAttr: 'data-devbox-config-field',
-              })}
-            </div>
-            <div class="container-slider-grid container-slider-grid-single">
-              ${renderSliderField({
-                label: '磁盘',
-                field: 'diskSize',
-                valueText: draft.diskSize || '50Gi',
-                valueIndex: devboxSliderIndex('diskSize', draft.diskSize || '50Gi'),
-                maxIndex: DEVBOX_DISK_OPTIONS.length - 1,
-                minLabel: DEVBOX_DISK_OPTIONS[0],
-                maxLabel: DEVBOX_DISK_OPTIONS[DEVBOX_DISK_OPTIONS.length - 1],
-                disabled: false,
-                dataFieldAttr: 'data-devbox-config-field',
-              })}
-            </div>
-          </section>
-
-          <div class="db-config-footer">
-            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
-            <button type="button" class="db-primary-button" data-devbox-config-action="save">保存配置</button>
-          </div>
-        </div>
-      `;
+      dom.chatContext.innerHTML = renderDevboxConfigCard(node, draft, template, {
+        section: view.focusSection,
+        statusClass,
+        statusText,
+        showSave: true,
+        disabled: false,
+      });
       return;
     }
 
@@ -8723,6 +9173,22 @@
         return;
       }
 
+      if (message.ui === 'devbox-web-coding' && button.dataset.aguiAction === 'webcoding-select-mode') {
+        message.payload.mode = button.dataset.webcodingMode === 'manual' ? 'manual' : 'auto';
+        message.payload.error = '';
+        message.payload.statusText =
+          message.payload.mode === 'manual'
+            ? '填写你自己的 API Key、Base URL 和模型类型。'
+            : '将通过 Sealos AI Proxy 自动创建 key 并代理模型。';
+        renderChat();
+        return;
+      }
+
+      if (message.ui === 'devbox-web-coding' && button.dataset.aguiAction === 'save-webcoding') {
+        saveDevboxWebCodingFromAgui(message.id);
+        return;
+      }
+
       if (message.ui === 'database-deploy' && button.dataset.aguiAction === 'database-deploy') {
         void deployDatabaseFromAgui(message.id);
         return;
@@ -9023,6 +9489,9 @@
               return;
             }
             context.view.releaseId = devboxWorkspaceButton.dataset.devboxReleaseId || '';
+            if (context.view.templatePublishOpen) {
+              context.view.templatePublishTargetId = context.view.releaseId;
+            }
             context.view.releaseError = '';
             context.view.releaseInfo = '';
             renderCanvasWorkspace();
@@ -9035,6 +9504,50 @@
           }
 
           if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'publish-template') {
+            const context = activeDevboxVersionContext();
+            if (!context) {
+              return;
+            }
+            context.view.templatePublishOpen = true;
+            context.view.templatePublishTargetId =
+              devboxWorkspaceButton.dataset.devboxReleaseId || (context.release && context.release.id) || '';
+            context.view.templateVisibility = 'private';
+            context.view.templateDescription = '';
+            context.view.releaseError = '';
+            context.view.releaseInfo = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'set-template-visibility') {
+            const context = activeDevboxVersionContext();
+            if (!context) {
+              return;
+            }
+            context.view.templateVisibility =
+              devboxWorkspaceButton.dataset.devboxTemplateVisibility === 'public' ? 'public' : 'private';
+            context.view.releaseError = '';
+            context.view.releaseInfo = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'cancel-publish-template') {
+            const context = activeDevboxVersionContext();
+            if (!context) {
+              return;
+            }
+            context.view.templatePublishOpen = false;
+            context.view.templatePublishTargetId = '';
+            context.view.templateVisibility = 'private';
+            context.view.templateDescription = '';
+            context.view.releaseError = '';
+            context.view.releaseInfo = '';
+            renderCanvasWorkspace();
+            return;
+          }
+
+          if (devboxWorkspaceButton.dataset.devboxWorkspaceAction === 'submit-publish-template') {
             publishDevboxTemplateFromWorkspace(devboxWorkspaceButton.dataset.devboxReleaseId || '');
             return;
           }
@@ -9175,7 +9688,11 @@
             return;
           }
 
-          context.view.releaseDraft = devboxReleaseInput.value;
+          if (devboxReleaseInput.dataset.devboxReleaseField === 'templateDescription') {
+            context.view.templateDescription = devboxReleaseInput.value;
+          } else {
+            context.view.releaseDraft = devboxReleaseInput.value;
+          }
           context.view.releaseError = '';
           context.view.releaseInfo = '';
           return;
@@ -9244,7 +9761,11 @@
             return;
           }
 
-          context.view.releaseDraft = devboxReleaseInput.value;
+          if (devboxReleaseInput.dataset.devboxReleaseField === 'templateDescription') {
+            context.view.templateDescription = devboxReleaseInput.value;
+          } else {
+            context.view.releaseDraft = devboxReleaseInput.value;
+          }
           context.view.releaseError = '';
           context.view.releaseInfo = '';
           renderCanvasWorkspace();
@@ -10739,31 +11260,45 @@
 
   function renderNodeDevboxCard(node, config) {
     const current = config || (node && node.devboxConfig) || {};
-    const port = String(current.port || DEFAULT_DEPLOY_PORT).trim().replace(/\/tcp$/i, '');
-    const workingDir = String(current.workingDir || '/workspace').trim();
     const startCommand = String(current.startCommand || 'sleep infinity').trim();
 
     return `
       <div class="devbox-key-grid">
-        <div class="devbox-key-item">
+        <div
+          class="devbox-key-item node-devbox-focus-item"
+          role="button"
+          tabindex="-1"
+          data-node-devbox-focus="start"
+          data-node-control="true"
+          title="启动命令"
+        >
           <span>启动命令</span>
           <strong>${escapeHtml(startCommand)}</strong>
         </div>
-        <div class="devbox-key-item">
-          <span>工作目录</span>
-          <strong>${escapeHtml(workingDir)}</strong>
-        </div>
-        <div class="devbox-key-item">
-          <span>监听端口</span>
-          <strong>${escapeHtml(`${port}/TCP`)}</strong>
+      </div>
+
+      <div
+        class="node-devbox-ide-entries"
+        role="button"
+        tabindex="-1"
+        data-node-devbox-focus="ide"
+        data-node-control="true"
+        title="连接本地 IDE"
+      >
+        <div class="node-devbox-ide-entry">
+          <span class="node-devbox-ide-mark material-symbols-outlined">cable</span>
+          <div class="node-devbox-ide-copy">
+            <strong>连接本地 IDE</strong>
+          </div>
         </div>
       </div>
 
-      <div class="node-container-tools node-tool-row-3">
+      <div class="node-container-tools">
         ${[
           { action: 'metrics', icon: 'monitoring', label: 'Metrics' },
           { action: 'terminal', icon: 'terminal', label: 'Terminal' },
           { action: 'version-manager', icon: 'inventory_2', label: '版本管理' },
+          { action: 'web-coding', icon: 'smart_toy', label: 'Vibe Coding' },
         ]
           .map(
             (tool) => `
@@ -12109,19 +12644,12 @@
     syncDevboxNode(node);
     const activeContext = isActiveConfigMessage(message, node.id) ? activeDevboxContext() : null;
     const devbox = node.devboxConfig || {};
-    const draft = {
-      ...devbox,
-      ...(activeContext ? activeContext.view.configDraft || {} : {}),
-      cpu: String((((activeContext && activeContext.view.configDraft) || {}).cpu || devbox.cpu) || '').trim(),
-      memory: String((((activeContext && activeContext.view.configDraft) || {}).memory || devbox.memory) || '').trim(),
-      diskSize: String((((activeContext && activeContext.view.configDraft) || {}).diskSize || devbox.diskSize) || '').trim(),
-      diskUsed: String((((activeContext && activeContext.view.configDraft) || {}).diskUsed || devbox.diskUsed) || '').trim(),
-      startCommand: String((((activeContext && activeContext.view.configDraft) || {}).startCommand || devbox.startCommand) || '').trim(),
-      workingDir: String((((activeContext && activeContext.view.configDraft) || {}).workingDir || devbox.workingDir) || '').trim(),
-      port: String((((activeContext && activeContext.view.configDraft) || {}).port || devbox.port) || '').trim().replace(/\/tcp$/i, ''),
-    };
+    const draft = devboxConfigDraftSnapshot(devbox, activeContext ? activeContext.view.configDraft || {} : {});
     const template = getDevboxTemplateById(draft.templateId) || resolveDevboxNodeTemplate(node);
     const changed = activeContext ? devboxConfigChanged(node, draft) : false;
+    const focusSection = normalizeDevboxFocusSection(
+      activeContext ? activeContext.view.focusSection : message.payload && message.payload.section,
+    );
     const statusClass = activeContext
       ? activeContext.view.error
         ? 'error'
@@ -12140,99 +12668,146 @@
         ? '开发环境配置有未保存修改'
         : '当前配置已生效'
       : '开发环境当前保存配置';
-    const disabledAttr = activeContext ? '' : 'disabled';
 
     return `
       <div class="chat-message assistant agui-message">
         <div class="chat-avatar">AI</div>
-        <div class="db-config-card chat-config-card ${activeContext ? 'is-active' : 'is-history'}" data-config-message-id="${message.id}">
-          <div class="db-config-header">
+        ${renderDevboxConfigCard(node, draft, template, {
+          section: focusSection,
+          statusClass,
+          statusText,
+          showSave: Boolean(activeContext),
+          disabled: !activeContext,
+          cardClass: `chat-config-card ${activeContext ? 'is-active' : 'is-history'}`,
+          messageId: message.id,
+        })}
+      </div>
+    `;
+  }
+
+  function renderDevboxWebCodingMessage(message) {
+    const payload = message.payload || {};
+    const node = getNodeById(payload.nodeId);
+    if (!node || node.type !== 'devbox') {
+      return renderMissingConfigMessage('Vibe Coding 配置');
+    }
+
+    syncDevboxNode(node);
+    const mode = String(payload.mode || '').trim() === 'manual' ? 'manual' : 'auto';
+    const provider = String(payload.provider || '').trim().toLowerCase() === 'anthropic' ? 'Anthropic' : 'OpenAI';
+    const baseUrlPlaceholder = provider === 'Anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1';
+    const statusText =
+      payload.error ||
+      payload.statusText ||
+      (mode === 'manual'
+        ? '填写自己的 API Key、Base URL 和模型类型。'
+        : '将通过 Sealos AI Proxy 自动创建 key 并代理模型。');
+
+    return `
+      <div class="chat-message assistant agui-message">
+        <div class="chat-avatar">UI</div>
+        <div class="agui-card" data-agui-id="${message.id}">
+          <div class="agui-card-header">
             <div>
-              <strong>${escapeHtml(`${cardTitleForNode(node) || 'Workspace'} 开发环境`)}</strong>
+              <strong>${escapeHtml(`${cardTitleForNode(node) || node.title} Vibe Coding`)}</strong>
+              <span>为当前开发环境配置 AI 编码接入方式。</span>
             </div>
-            <div class="db-chip">${escapeHtml(template ? template.name : 'DevBox')}</div>
+            <div class="agui-card-pill">${escapeHtml(mode === 'manual' ? '手动配置' : '完全自动')}</div>
           </div>
 
-          <section class="db-config-section">
-            <div class="db-config-copy">启动命令、工作目录和监听端口是开发环境的核心信息。</div>
-            <div class="devbox-command-row">
-              <input
-                class="agui-input"
-                type="text"
-                value="${escapeHtml(draft.startCommand || '')}"
-                data-devbox-config-field="startCommand"
-                ${disabledAttr}
-              />
-              <button type="button" class="db-primary-button" data-devbox-config-action="start" ${disabledAttr}>启动</button>
-            </div>
-            <div class="devbox-primary-grid">
-              <label class="db-config-label">
-                <span>工作空间 / 工作目录</span>
-                <input
-                  class="agui-input"
-                  type="text"
-                  value="${escapeHtml(draft.workingDir || '')}"
-                  data-devbox-config-field="workingDir"
-                  ${disabledAttr}
-                />
-              </label>
-              <label class="db-config-label">
-                <span>监听端口</span>
-                <input
-                  class="agui-input"
-                  type="text"
-                  value="${escapeHtml(draft.port || '')}"
-                  data-devbox-config-field="port"
-                  ${disabledAttr}
-                />
-              </label>
-            </div>
-          </section>
+          <div class="agui-methods">
+            <section class="agui-method">
+              <div class="agui-method-title">配置方式</div>
+              <div class="agui-method-copy">选择 Sealos AI Proxy 自动托管，或手动接入你自己的模型服务。</div>
+              <div class="devbox-webcoding-mode-row">
+                <button
+                  type="button"
+                  class="db-ghost-button ${mode === 'auto' ? 'active' : ''}"
+                  data-agui-action="webcoding-select-mode"
+                  data-webcoding-mode="auto"
+                  data-message-id="${message.id}"
+                >
+                  完全自动配置
+                </button>
+                <button
+                  type="button"
+                  class="db-ghost-button ${mode === 'manual' ? 'active' : ''}"
+                  data-agui-action="webcoding-select-mode"
+                  data-webcoding-mode="manual"
+                  data-message-id="${message.id}"
+                >
+                  手动配置
+                </button>
+              </div>
+            </section>
 
-          <section class="db-config-section">
-            <div class="db-config-copy">资源规则。</div>
-            <div class="container-slider-grid">
-              ${renderSliderField({
-                label: 'CPU',
-                field: 'cpu',
-                valueText: `${draft.cpu || '4'} Core`,
-                valueIndex: devboxSliderIndex('cpu', draft.cpu || '4'),
-                maxIndex: DEVBOX_CPU_OPTIONS.length - 1,
-                minLabel: DEVBOX_CPU_OPTIONS[0],
-                maxLabel: DEVBOX_CPU_OPTIONS[DEVBOX_CPU_OPTIONS.length - 1],
-                disabled: !activeContext,
-                dataFieldAttr: 'data-devbox-config-field',
-              })}
-              ${renderSliderField({
-                label: '内存',
-                field: 'memory',
-                valueText: draft.memory || '8Gi',
-                valueIndex: devboxSliderIndex('memory', draft.memory || '8Gi'),
-                maxIndex: DEVBOX_MEMORY_OPTIONS.length - 1,
-                minLabel: DEVBOX_MEMORY_OPTIONS[0],
-                maxLabel: DEVBOX_MEMORY_OPTIONS[DEVBOX_MEMORY_OPTIONS.length - 1],
-                disabled: !activeContext,
-                dataFieldAttr: 'data-devbox-config-field',
-              })}
-            </div>
-            <div class="container-slider-grid container-slider-grid-single">
-              ${renderSliderField({
-                label: '磁盘',
-                field: 'diskSize',
-                valueText: draft.diskSize || '50Gi',
-                valueIndex: devboxSliderIndex('diskSize', draft.diskSize || '50Gi'),
-                maxIndex: DEVBOX_DISK_OPTIONS.length - 1,
-                minLabel: DEVBOX_DISK_OPTIONS[0],
-                maxLabel: DEVBOX_DISK_OPTIONS[DEVBOX_DISK_OPTIONS.length - 1],
-                disabled: !activeContext,
-                dataFieldAttr: 'data-devbox-config-field',
-              })}
-            </div>
-          </section>
+            ${
+              mode === 'auto'
+                ? `
+                  <section class="agui-method">
+                    <div class="agui-method-title">完全自动配置</div>
+                    <div class="agui-method-copy">会在 Sealos 的 AI Proxy 中自动创建一个 key，并通过 Sealos 的 Proxy 代理模型。</div>
+                    <div class="devbox-webcoding-summary">
+                      <div class="devbox-webcoding-item">
+                        <span>Proxy Key</span>
+                        <strong>${escapeHtml(payload.autoKey || '保存后自动创建')}</strong>
+                      </div>
+                      <div class="devbox-webcoding-item">
+                        <span>Proxy Base URL</span>
+                        <strong>${escapeHtml(payload.proxyBaseUrl || 'https://aiproxy.sealos.run/v1')}</strong>
+                      </div>
+                    </div>
+                  </section>
+                `
+                : `
+                  <section class="agui-method">
+                    <div class="agui-method-title">手动配置</div>
+                    <div class="agui-method-copy">填写你自己的 key 和 Base URL，并选择模型类型是 Anthropic 还是 OpenAI。</div>
+                    <div class="agui-grid agui-grid-2">
+                      <label class="db-config-label">
+                        <span>模型类型</span>
+                        <select class="agui-select" data-agui-field="provider" data-message-id="${message.id}">
+                          ${selectOptions(['OpenAI', 'Anthropic'], provider)}
+                        </select>
+                      </label>
+                      <label class="db-config-label">
+                        <span>Base URL</span>
+                        <input
+                          class="agui-input"
+                          type="text"
+                          value="${escapeHtml(payload.baseUrl || '')}"
+                          placeholder="${escapeHtml(baseUrlPlaceholder)}"
+                          data-agui-field="baseUrl"
+                          data-message-id="${message.id}"
+                        />
+                      </label>
+                    </div>
+                    <label class="db-config-label">
+                      <span>API Key</span>
+                      <input
+                        class="agui-input"
+                        type="password"
+                        value="${escapeHtml(payload.apiKey || '')}"
+                        placeholder="sk-..."
+                        data-agui-field="apiKey"
+                        data-message-id="${message.id}"
+                      />
+                    </label>
+                  </section>
+                `
+            }
+          </div>
 
-          <div class="db-config-footer">
-            <div class="db-config-status ${statusClass}">${escapeHtml(statusText)}</div>
-            ${activeContext ? '<button type="button" class="db-primary-button" data-devbox-config-action="save">保存配置</button>' : ''}
+          <div class="agui-card-footer">
+            <div class="agui-status ${payload.error ? 'error' : ''}">${escapeHtml(statusText)}</div>
+            <button
+              type="button"
+              class="agui-primary-button"
+              data-agui-action="save-webcoding"
+              data-message-id="${message.id}"
+            >
+              ${mode === 'manual' ? '保存手动配置' : '启用自动配置'}
+            </button>
           </div>
         </div>
       </div>
@@ -12800,6 +13375,10 @@
 
     if (message.ui === 'devbox-config') {
       return renderDevboxConfigMessage(message);
+    }
+
+    if (message.ui === 'devbox-web-coding') {
+      return renderDevboxWebCodingMessage(message);
     }
 
     if (message.ui === 'env-injection') {

@@ -10,7 +10,7 @@
     "repo_name": "sealai",
     "url": "https://sealai-yjhjqxcq.sealosgzg.site",
     "deployed_at": "2026-04-01T07:26:22Z",
-    "last_updated_at": "2026-04-15T03:38:21Z"
+    "last_updated_at": "2026-04-15T12:04:22Z"
   },
   "history": [
     {
@@ -101,6 +101,24 @@
       "method": "kubectl-configmap-patch",
       "status": "success",
       "note": "Synced the latest log workspace redesign and chat auto-scroll behavior to the live Sealos app via ConfigMap patch. Remote app.js matched the new realtime/history-exclusive log filters, range selection, and forced chat-bottom scrolling, and the deployment rollout completed successfully."
+    },
+    {
+      "at": "2026-04-15T10:05:44Z",
+      "action": "sync-public-assets",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "configmap": "sealai-ymwsyhbd-public",
+      "method": "kubectl-configmap-replace",
+      "status": "success",
+      "note": "Synced the latest DevBox config cleanup to the live Sealos app via ConfigMap replace. Removed the DevBox service-domain section and duplicate Metrics/Terminal/version-manager actions from the chat-side config UI; rollout completed successfully."
+    },
+    {
+      "at": "2026-04-15T12:04:22Z",
+      "action": "sync-public-assets",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "configmap": "sealai-ymwsyhbd-public",
+      "method": "kubectl-configmap-replace",
+      "status": "success",
+      "note": "Synced the latest DevBox IDE-entry card changes and Vibe Coding updates to the live Sealos app via ConfigMap replace. The live app.js matched the new IDE shortcuts, Vibe Coding icon/title, and grouped start/workspace/port config flow; rollout completed successfully."
     }
   ]
 }
