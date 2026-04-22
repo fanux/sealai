@@ -4860,6 +4860,789 @@ button {
   background: var(--panel-2);
 }
 
+/* sealai-ui reference pass */
+.app-shell {
+  background:
+    linear-gradient(180deg, rgba(17, 20, 29, 0.98), rgba(12, 14, 20, 0.98));
+}
+
+body::before {
+  display: none;
+}
+
+.app-header {
+  height: 54px;
+  padding: 0 18px;
+  background: rgba(20, 22, 31, 0.96);
+}
+
+.brand-block {
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-logo {
+  width: 14px;
+  height: 14px;
+  display: inline-flex;
+  flex: 0 0 auto;
+  border-radius: 4px 10px 10px 10px;
+  background:
+    radial-gradient(circle at 32% 34%, #7dc5ff 0 22%, transparent 23%),
+    linear-gradient(135deg, #5aa9ff 0%, #7dc5ff 45%, #98e2ff 100%);
+  transform: rotate(-18deg);
+  box-shadow: 0 0 18px rgba(125, 197, 255, 0.28);
+}
+
+.brand-block strong {
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.header-actions {
+  gap: 10px;
+}
+
+.header-indicators {
+  display: inline-flex;
+  align-items: center;
+  gap: 14px;
+  margin-right: 4px;
+}
+
+.header-indicator {
+  width: 12px;
+  height: 12px;
+  display: inline-block;
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 999px;
+  opacity: 0.9;
+}
+
+.header-icon-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: transparent;
+}
+
+.header-icon-button .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.header-plan-button {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 10px;
+  border-color: rgba(255, 255, 255, 0.08);
+  background: linear-gradient(180deg, rgba(50, 54, 65, 0.96), rgba(38, 41, 50, 0.96));
+  color: #f1f4fb;
+  font: 600 12px/1 var(--font-body);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.header-plan-button:hover {
+  border-color: rgba(125, 197, 255, 0.28);
+  background: linear-gradient(180deg, rgba(56, 62, 74, 0.98), rgba(44, 48, 58, 0.98));
+  color: #ffffff;
+}
+
+.app-main {
+  grid-template-columns: 52px minmax(0, 1fr) 488px;
+  background: #0e1118;
+}
+
+.side-rail {
+  background: #161922;
+}
+
+.side-rail-panel {
+  padding: 12px 7px;
+  gap: 10px;
+}
+
+.rail-icon-button,
+.recent-project-item {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(35, 39, 48, 0.7);
+}
+
+.rail-icon-button.active,
+.recent-project-item.active {
+  border-color: rgba(125, 197, 255, 0.32);
+  background:
+    linear-gradient(180deg, rgba(52, 77, 121, 0.92), rgba(33, 45, 72, 0.92));
+  color: #b6d8ff;
+  box-shadow: inset 0 0 0 1px rgba(125, 197, 255, 0.14);
+}
+
+.rail-icon-button:hover,
+.recent-project-item:hover {
+  background: rgba(42, 46, 56, 0.92);
+}
+
+.recent-project-list {
+  gap: 10px;
+}
+
+.recent-project-empty {
+  width: 36px;
+  min-height: 36px;
+  border-radius: 10px;
+}
+
+.canvas-shell {
+  position: relative;
+  background:
+    radial-gradient(circle at 42% 44%, rgba(33, 55, 105, 0.26), transparent 34%),
+    linear-gradient(180deg, #0a0c11 0%, #0d1119 58%, #0b1220 100%);
+}
+
+.canvas-stage {
+  background-image:
+    radial-gradient(circle at 38% 42%, rgba(43, 67, 123, 0.2), transparent 40%),
+    radial-gradient(circle at 1px 1px, rgba(96, 108, 135, 0.26) 1px, transparent 0);
+  background-size: 100% 100%, 32px 32px;
+}
+
+.canvas-workspace {
+  background:
+    linear-gradient(180deg, rgba(12, 15, 23, 0.98), rgba(16, 19, 28, 0.98));
+}
+
+.canvas-hud {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  pointer-events: none;
+}
+
+.canvas-toolbar {
+  position: absolute;
+  left: 16px;
+  bottom: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(22, 25, 34, 0.92);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+}
+
+.canvas-tool-button {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 9px;
+  background: rgba(29, 34, 44, 0.96);
+  color: #d6deed;
+  cursor: pointer;
+  transition: border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.canvas-tool-button:hover {
+  border-color: rgba(125, 197, 255, 0.32);
+  background: rgba(35, 43, 58, 0.98);
+  color: #ffffff;
+}
+
+.canvas-tool-button .material-symbols-outlined {
+  font-size: 15px;
+}
+
+.canvas-minimap {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 196px;
+  height: 124px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  background: rgba(30, 31, 39, 0.9);
+  box-shadow: 0 18px 34px rgba(0, 0, 0, 0.3);
+  pointer-events: none;
+}
+
+.canvas-minimap-grid,
+.canvas-minimap-nodes,
+.canvas-minimap-viewport {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas-minimap-grid {
+  background-image: radial-gradient(circle at 1px 1px, rgba(130, 136, 154, 0.18) 1px, transparent 0);
+  background-size: 24px 24px;
+}
+
+.canvas-minimap-node {
+  position: absolute;
+  border: 1px solid rgba(125, 197, 255, 0.14);
+  border-radius: 4px;
+  background: rgba(125, 197, 255, 0.18);
+}
+
+.canvas-minimap-node.running {
+  background: rgba(84, 211, 154, 0.28);
+}
+
+.canvas-minimap-node.error {
+  background: rgba(255, 123, 134, 0.28);
+}
+
+.canvas-minimap-node.other {
+  background: rgba(125, 197, 255, 0.16);
+}
+
+.canvas-minimap-node.active {
+  border-color: rgba(255, 255, 255, 0.5);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+}
+
+.canvas-minimap-viewport {
+  inset: auto;
+  border: 1px solid rgba(125, 197, 255, 0.62);
+  border-radius: 6px;
+  background: rgba(125, 197, 255, 0.08);
+  box-shadow: inset 0 0 0 1px rgba(125, 197, 255, 0.14);
+}
+
+.chat-shell {
+  grid-template-rows: 0 minmax(0, 1fr) auto;
+  padding: 0;
+  background: #181b23;
+  border-left-color: rgba(255, 255, 255, 0.06);
+}
+
+.chat-title {
+  display: none;
+}
+
+.chat-scroll {
+  gap: 16px;
+  padding: 18px 18px 12px;
+}
+
+.chat-log {
+  gap: 14px;
+}
+
+.chat-avatar,
+.chat-message.user .chat-avatar {
+  display: none;
+}
+
+.chat-bubble {
+  max-width: 100%;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(31, 35, 44, 0.96);
+}
+
+.chat-context.active {
+  margin-bottom: 2px;
+}
+
+.agui-card {
+  gap: 16px;
+  padding: 14px 14px 16px;
+  border-radius: 16px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 22%),
+    rgba(27, 30, 38, 0.96);
+}
+
+.agui-project-create-card {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.agui-project-create-header {
+  justify-content: flex-start;
+  padding-top: 2px;
+}
+
+.agui-project-create-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.agui-project-create-icon {
+  color: #8ec4ff;
+  font-size: 20px;
+  line-height: 1;
+  transform: translateY(1px);
+}
+
+.agui-project-create-title strong {
+  margin: 0 0 4px;
+  font-size: 18px;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+
+.agui-project-create-title span {
+  color: #a3aab9;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.agui-project-create-methods,
+.agui-project-base,
+.agui-project-scenarios {
+  gap: 16px;
+}
+
+.agui-project-base,
+.agui-project-scenarios {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.agui-field {
+  display: grid;
+  gap: 8px;
+}
+
+.agui-field-label {
+  color: #eef2f8;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.agui-method-title {
+  color: #eef2f8;
+  font: 600 12px/1 var(--font-body);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+.agui-input,
+.agui-textarea,
+.agui-select {
+  border-color: rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(23, 26, 34, 0.98);
+}
+
+.agui-input {
+  height: 36px;
+  padding: 0 12px;
+}
+
+.project-mode-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.project-mode-option {
+  position: relative;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 12px;
+  min-height: 72px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(30, 33, 42, 0.96);
+}
+
+.project-mode-selection {
+  position: absolute;
+  inset: 0;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px transparent;
+  pointer-events: none;
+}
+
+.project-mode-option.active {
+  border-color: rgba(125, 197, 255, 0.28);
+  background:
+    linear-gradient(180deg, rgba(43, 48, 60, 0.98), rgba(29, 32, 41, 0.98));
+}
+
+.project-mode-option.active .project-mode-selection {
+  box-shadow: inset 0 0 0 1px rgba(125, 197, 255, 0.18);
+}
+
+.project-mode-icon {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  background: transparent;
+  color: #e8edf7;
+}
+
+.project-mode-icon svg,
+.project-mode-icon .material-symbols-outlined {
+  width: 18px;
+  height: 18px;
+  font-size: 18px;
+}
+
+.project-mode-copy {
+  gap: 5px;
+}
+
+.project-mode-copy strong {
+  font-size: 12px;
+}
+
+.project-mode-copy span {
+  color: #9aa3b5;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.agui-card-footer {
+  justify-content: flex-start;
+}
+
+.agui-status {
+  color: #858e9f;
+}
+
+.chat-form {
+  padding: 12px 16px 16px;
+  border-top-color: rgba(255, 255, 255, 0.06);
+  background: #181b23;
+}
+
+.chat-input {
+  min-height: 92px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  line-height: 1.55;
+}
+
+.chat-actions {
+  align-items: center;
+}
+
+.chat-tool-dock {
+  grid-template-columns: repeat(6, 34px);
+  gap: 10px;
+}
+
+.chat-tool-button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background: rgba(29, 33, 41, 0.96);
+}
+
+.chat-tool-icon svg,
+.chat-tool-icon .material-symbols-outlined {
+  width: 16px;
+  height: 16px;
+  font-size: 16px;
+}
+
+.send-button {
+  min-width: 38px;
+  width: 38px;
+  height: 34px;
+  padding: 0;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+}
+
+.send-button .material-symbols-outlined {
+  font-size: 17px;
+}
+
+.node-card {
+  width: 140px;
+  min-height: 42px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border-color: rgba(255, 255, 255, 0.06);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
+    rgba(34, 37, 45, 0.94);
+  box-shadow: 0 14px 28px rgba(0, 0, 0, 0.24);
+}
+
+.node-card.is-expanded {
+  width: 240px;
+  padding: 12px;
+}
+
+.node-card[data-type='entry'].is-expanded {
+  width: 236px;
+  min-height: 84px;
+}
+
+.node-card[data-type='container'].is-expanded {
+  width: 248px;
+  min-height: 138px;
+}
+
+.node-card[data-type='database'].is-expanded {
+  width: 248px;
+  min-height: 156px;
+}
+
+.node-card[data-type='devbox'].is-expanded {
+  width: 240px;
+  min-height: 192px;
+}
+
+.node-control-stack {
+  top: -14px;
+  right: -2px;
+}
+
+.node-control-button,
+.node-link-handle,
+.node-container-tool,
+.node-devbox-ide-entry,
+.devbox-key-item,
+.node-container-image,
+.node-domain-row,
+.db-address-row {
+  border-radius: 10px;
+}
+
+.node-link-handle {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+}
+
+.node-control-button {
+  height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+}
+
+.node-thumbnail {
+  min-height: 24px;
+  gap: 8px;
+}
+
+.node-thumbnail-title {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.node-thumbnail-status {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  box-shadow: 0 0 8px currentColor;
+}
+
+.node-head-label,
+.node-head-inline-meta,
+.node-stack-inline,
+.node-container-label,
+.node-container-replicas,
+.node-domain-label,
+.db-address-label {
+  letter-spacing: 0;
+}
+
+.node-head-name,
+.node-head-title {
+  font-size: 15px;
+}
+
+.node-status-chip,
+.node-meta-chip,
+.node-kind-badge,
+.node-badge,
+.node-devbox-template {
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+}
+
+.node-status-chip.running {
+  background: rgba(84, 211, 154, 0.18);
+}
+
+.node-status-chip.error {
+  background: rgba(255, 123, 134, 0.14);
+}
+
+.node-status-chip.other {
+  background: rgba(246, 196, 83, 0.12);
+}
+
+.node-container-image {
+  margin-top: 8px;
+  padding: 7px 9px;
+}
+
+.node-container-tools {
+  gap: 7px;
+}
+
+.node-container-tool {
+  min-height: 30px;
+}
+
+.node-devbox-ide-entry {
+  grid-template-columns: 30px minmax(0, 1fr);
+}
+
+.node-devbox-ide-mark {
+  border-radius: 8px;
+}
+
+.project-overview-card,
+.project-create-card,
+.db-config-card,
+.entry-config-card,
+.agui-card,
+.plan-panel,
+.floating-window,
+.db-panel,
+.log-line,
+.metrics-chart-card,
+.metrics-disk-card,
+.metrics-event-item {
+  border-radius: 14px;
+}
+
+.db-ghost-button,
+.db-primary-button,
+.agui-primary-button,
+.agui-secondary-button,
+.header-plan-button,
+.header-icon-button,
+.chat-tool-button,
+.send-button,
+.canvas-tool-button,
+.db-file-trigger,
+.entry-whitelist-remove,
+.plan-card-action,
+.db-import-method,
+.db-database-button,
+.db-table-button,
+.db-tab-button {
+  border-radius: 10px;
+}
+
+/* Restore chat-side functional layout */
+.chat-shell {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.chat-title {
+  display: block;
+}
+
+.chat-scroll {
+  gap: 12px;
+  padding: 0 4px 0 0;
+}
+
+.chat-log {
+  gap: 10px;
+}
+
+.chat-context.active {
+  margin-bottom: 0;
+}
+
+.chat-form {
+  padding: 12px 0 0;
+  background: transparent;
+}
+
+.chat-input {
+  min-height: 116px;
+  padding: 10px;
+  border-radius: 0;
+}
+
+.chat-actions {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.chat-tool-dock {
+  grid-template-columns: repeat(6, 42px);
+  gap: 8px;
+}
+
+.chat-tool-button {
+  width: 42px;
+  height: 42px;
+  border-radius: 0;
+}
+
+.send-button {
+  width: auto;
+  min-width: 84px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 0;
+}
+
+.project-mode-grid {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 8px;
+}
+
+.project-mode-option {
+  grid-template-columns: 34px minmax(0, 1fr);
+  min-height: 0;
+  padding: 10px;
+  border-radius: 0;
+  background: #091328;
+  border-color: var(--line-2);
+}
+
+.project-mode-option.active {
+  background: rgba(18, 31, 58, 0.96);
+}
+
+.project-mode-icon {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line-2);
+  background: var(--panel);
+}
+
+.project-mode-copy strong {
+  font-size: 12px;
+}
+
+.project-mode-copy span {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.agui-method-title {
+  color: var(--text);
+  font: 10px var(--font-mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
 .chat-tool-button[data-accent='docker'] .chat-tool-icon {
   color: #74c6fc;
 }
@@ -5011,44 +5794,4 @@ button {
   .plan-countdown {
     min-width: 0;
   }
-}
-
-/* Final Figma theme overrides for late-defined chat controls */
-.chat-shell {
-  background: rgba(13, 13, 15, 0.96);
-}
-
-.chat-form {
-  border-top-color: var(--line);
-  background: rgba(13, 13, 15, 0.98);
-}
-
-.chat-input {
-  border-color: rgba(82, 82, 91, 0.58);
-  background: rgba(16, 16, 18, 0.96);
-}
-
-.chat-input::placeholder {
-  color: var(--text-dim);
-}
-
-.send-button {
-  border-color: rgba(125, 197, 255, 0.28);
-  background: rgba(125, 197, 255, 0.08);
-  color: #d9f3ff;
-}
-
-.send-button:hover {
-  border-color: rgba(125, 197, 255, 0.48);
-  background: rgba(125, 197, 255, 0.14);
-}
-
-.chat-tool-button {
-  border-color: var(--line);
-  background: var(--panel);
-}
-
-.chat-tool-button:hover {
-  border-color: var(--line-2);
-  background: var(--panel-2);
 }

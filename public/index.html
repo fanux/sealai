@@ -20,10 +20,15 @@
     <div class="app-shell">
       <header class="app-header">
         <div class="brand-block">
+          <span class="brand-logo" aria-hidden="true"></span>
           <strong>SealAI</strong>
         </div>
 
         <div class="header-actions">
+          <div class="header-indicators" aria-hidden="true">
+            <span class="header-indicator"></span>
+            <span class="header-indicator"></span>
+          </div>
           <button class="header-icon-button" type="button" aria-label="返回桌面" title="返回桌面">
             <span class="material-symbols-outlined">desktop_windows</span>
           </button>
@@ -64,6 +69,27 @@
               <div id="nodeLayer" class="node-layer"></div>
             </div>
             <section id="canvasWorkspace" class="canvas-workspace" hidden></section>
+          </div>
+          <div class="canvas-hud" aria-hidden="false">
+            <div class="canvas-toolbar">
+              <button type="button" class="canvas-tool-button" data-canvas-control="focus" title="居中画布" aria-label="居中画布">
+                <span class="material-symbols-outlined">near_me</span>
+              </button>
+              <button type="button" class="canvas-tool-button" data-canvas-control="fit" title="重置缩放" aria-label="重置缩放">
+                <span class="material-symbols-outlined">fit_screen</span>
+              </button>
+              <button type="button" class="canvas-tool-button" data-canvas-control="zoom-in" title="放大" aria-label="放大">
+                <span class="material-symbols-outlined">add</span>
+              </button>
+              <button type="button" class="canvas-tool-button" data-canvas-control="zoom-out" title="缩小" aria-label="缩小">
+                <span class="material-symbols-outlined">remove</span>
+              </button>
+            </div>
+            <div class="canvas-minimap">
+              <div class="canvas-minimap-grid"></div>
+              <div id="canvasMinimapNodes" class="canvas-minimap-nodes"></div>
+              <div id="canvasMinimapViewport" class="canvas-minimap-viewport"></div>
+            </div>
           </div>
         </main>
 

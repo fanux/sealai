@@ -305,11 +305,14 @@
 
   const dom = {
     navFilters: document.getElementById('navFilters'),
+    canvasShell: document.querySelector('.canvas-shell'),
     nodeLayer: document.getElementById('nodeLayer'),
     edgeLayer: document.getElementById('edgeLayer'),
     canvasStage: document.getElementById('canvasStage'),
     canvasWorld: document.getElementById('canvasWorld'),
     canvasWorkspace: document.getElementById('canvasWorkspace'),
+    canvasMinimapNodes: document.getElementById('canvasMinimapNodes'),
+    canvasMinimapViewport: document.getElementById('canvasMinimapViewport'),
     chatTitle: document.getElementById('chatTitle'),
     chatScroll: document.getElementById('chatScroll'),
     chatContext: document.getElementById('chatContext'),
@@ -8882,6 +8885,44 @@
   }
 
   function bindEvents() {
+    document.addEventListener('click', (event) => {
+      const control = event.target.closest('[data-canvas-control]');
+      if (!control || !dom.canvasStage) {
+        return;
+      }
+
+      const stageRect = dom.canvasStage.getBoundingClientRect();
+      const centerX = stageRect.left + stageRect.width / 2;
+      const centerY = stageRect.top + stageRect.height / 2;
+      const action = control.dataset.canvasControl;
+
+      if (action === 'zoom-in') {
+        zoomCanvasAt(centerX, centerY, state.canvasViewport.scale * 1.12);
+        return;
+      }
+
+      if (action === 'zoom-out') {
+        zoomCanvasAt(centerX, centerY, state.canvasViewport.scale / 1.12);
+        return;
+      }
+
+      if (action === 'fit') {
+        syncCanvasViewport(true);
+        scheduleEdgeRender();
+        return;
+      }
+
+      if (action === 'focus') {
+        const bounds = canvasContentBounds();
+        const centerWorldX = bounds.minX + bounds.width / 2;
+        const centerWorldY = bounds.minY + bounds.height / 2;
+        state.canvasViewport.x = stageRect.width / 2 - centerWorldX * state.canvasViewport.scale;
+        state.canvasViewport.y = stageRect.height / 2 - centerWorldY * state.canvasViewport.scale;
+        applyCanvasViewport();
+        scheduleEdgeRender();
+      }
+    });
+
     const clearEdgeSelection = (options = {}) => {
       const keepHover = Boolean(options.keepHover);
       if (!state.selectedEdgeId && (keepHover || !state.hoveredEdgeId)) {
@@ -11595,6 +11636,115 @@
     return { x, y };
   }
 
+  function nodeVisualBounds(node) {
+    const expanded = Boolean(node && node.expanded);
+    const widthMap = {
+      entry: expanded ? 236 : 140,
+      container: expanded ? 248 : 140,
+      database: expanded ? 248 : 140,
+      app: expanded ? 220 : 140,
+      devbox: expanded ? 240 : 140,
+    };
+    const heightMap = {
+      entry: expanded ? 84 : 42,
+      container: expanded ? 138 : 42,
+      database: expanded ? 156 : 42,
+      app: expanded ? 120 : 42,
+      devbox: expanded ? 192 : 42,
+    };
+
+    return {
+      width: widthMap[node.type] || 172,
+      height: heightMap[node.type] || 56,
+    };
+  }
+
+  function canvasContentBounds() {
+    if (!state.nodes.length) {
+      return {
+        minX: 0,
+        minY: 0,
+        maxX: 1280,
+        maxY: 820,
+        width: 1280,
+        height: 820,
+      };
+    }
+
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+
+    state.nodes.forEach((node) => {
+      const size = nodeVisualBounds(node);
+      minX = Math.min(minX, node.x);
+      minY = Math.min(minY, node.y);
+      maxX = Math.max(maxX, node.x + size.width);
+      maxY = Math.max(maxY, node.y + size.height);
+    });
+
+    const padding = 140;
+    minX -= padding;
+    minY -= padding;
+    maxX += padding;
+    maxY += padding;
+
+    return {
+      minX,
+      minY,
+      maxX,
+      maxY,
+      width: Math.max(1, maxX - minX),
+      height: Math.max(1, maxY - minY),
+    };
+  }
+
+  function renderCanvasHud() {
+    if (!dom.canvasMinimapNodes || !dom.canvasMinimapViewport) {
+      return;
+    }
+
+    const width = 176;
+    const height = 116;
+    const padding = 10;
+    const bounds = canvasContentBounds();
+    const scale = Math.min((width - padding * 2) / bounds.width, (height - padding * 2) / bounds.height);
+
+    dom.canvasMinimapNodes.innerHTML = state.nodes
+      .map((node) => {
+        const size = nodeVisualBounds(node);
+        const left = padding + (node.x - bounds.minX) * scale;
+        const top = padding + (node.y - bounds.minY) * scale;
+        const nodeWidth = Math.max(8, size.width * scale);
+        const nodeHeight = Math.max(4, size.height * scale);
+        return `
+          <span
+            class="canvas-minimap-node ${node.id === state.selectedNodeId ? 'active' : ''} ${nodeStatusTone(node.status || '')}"
+            style="left:${left.toFixed(2)}px;top:${top.toFixed(2)}px;width:${nodeWidth.toFixed(2)}px;height:${nodeHeight.toFixed(2)}px;"
+          ></span>
+        `;
+      })
+      .join('');
+
+    const viewport = state.canvasViewport;
+    const stageWidth = dom.canvasStage ? dom.canvasStage.clientWidth : 0;
+    const stageHeight = dom.canvasStage ? dom.canvasStage.clientHeight : 0;
+    const viewWorldX = -viewport.x / viewport.scale;
+    const viewWorldY = -viewport.y / viewport.scale;
+    const viewWorldWidth = stageWidth / viewport.scale;
+    const viewWorldHeight = stageHeight / viewport.scale;
+    const viewportWidth = Math.max(18, viewWorldWidth * scale);
+    const viewportHeight = Math.max(14, viewWorldHeight * scale);
+    const viewportLeft = clamp(padding + (viewWorldX - bounds.minX) * scale, 0, width - viewportWidth);
+    const viewportTop = clamp(padding + (viewWorldY - bounds.minY) * scale, 0, height - viewportHeight);
+
+    dom.canvasMinimapViewport.style.left = `${viewportLeft.toFixed(2)}px`;
+    dom.canvasMinimapViewport.style.top = `${viewportTop.toFixed(2)}px`;
+    dom.canvasMinimapViewport.style.width = `${viewportWidth.toFixed(2)}px`;
+    dom.canvasMinimapViewport.style.height = `${viewportHeight.toFixed(2)}px`;
+  }
+
   function applyCanvasViewport() {
     if (!dom.canvasStage || !dom.canvasWorld) {
       return;
@@ -11611,6 +11761,7 @@
     dom.canvasStage.style.backgroundPosition = `${viewport.x}px ${viewport.y}px`;
     dom.canvasStage.classList.toggle('canvas-pan-enabled', canvasInteractionsEnabled());
     dom.canvasStage.classList.toggle('panning', Boolean(viewport.panningPointerId));
+    renderCanvasHud();
   }
 
   function syncCanvasViewport(forceRecenter = false) {
@@ -13520,7 +13671,6 @@
               <strong>创建项目</strong>
               <span>填写项目名、项目描述，并选择项目的创建方式。</span>
             </div>
-            <div class="agui-card-pill">Project</div>
           </div>
 
           <div class="agui-methods">
