@@ -5,7 +5,7 @@ SealAI 是一个面向 Sealos 的 AI Workspace 原型，用来把「项目源码
 它不是 Kubernetes 控制台，也不是纯聊天机器人。  
 中间是对象画布，右侧是聊天与 AGUI 操作面板，用户可以直接创建、配置、连接和管理云对象。
 
-<img width="3824" height="1894" alt="SealAI screenshot" src="https://github.com/user-attachments/assets/27558295-d00c-4f25-b003-ee09836c5ffd" />
+<img width="3826" height="1884" alt="image" src="https://github.com/user-attachments/assets/23f2644d-efb0-47ce-9d0d-d2302ad721be" />
 
 ## 项目目标
 
