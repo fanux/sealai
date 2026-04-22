@@ -1,0 +1,1944 @@
+/* Node effect preview1 */
+
+position: relative;
+width: 1440px;
+height: 840px;
+left: 190px;
+top: 2669px;
+
+
+
+/* Frame 1010102184 */
+
+position: absolute;
+width: 1440px;
+height: 840px;
+left: 0px;
+top: 0px;
+
+background: #0A0A0A;
+
+
+/* bg */
+
+/* Auto layout */
+display: flex;
+flex-direction: row;
+align-items: flex-start;
+padding: 0px 24px;
+gap: 31px;
+
+position: absolute;
+width: 1746px;
+height: 944px;
+left: 52px;
+top: 56px;
+
+
+
+/* Frame 20845 */
+
+/* Auto layout */
+display: flex;
+flex-direction: column;
+align-items: flex-start;
+padding: 0px;
+gap: 40px;
+
+width: 1px;
+height: 1149px;
+
+
+/* Inside auto layout */
+flex: none;
+order: 0;
+flex-grow: 0;
+
+
+/* Rectangle 149 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 0;
+flex-grow: 0;
+
+
+/* Rectangle 150 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 1;
+flex-grow: 0;
+
+
+/* Rectangle 151 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 2;
+flex-grow: 0;
+
+
+/* Rectangle 152 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 3;
+flex-grow: 0;
+
+
+/* Rectangle 153 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 4;
+flex-grow: 0;
+
+
+/* Rectangle 154 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 5;
+flex-grow: 0;
+
+
+/* Rectangle 155 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 6;
+flex-grow: 0;
+
+
+/* Rectangle 156 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 7;
+flex-grow: 0;
+
+
+/* Rectangle 157 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 8;
+flex-grow: 0;
+
+
+/* Rectangle 158 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 9;
+flex-grow: 0;
+
+
+/* Rectangle 159 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 10;
+flex-grow: 0;
+
+
+/* Rectangle 160 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 11;
+flex-grow: 0;
+
+
+/* Rectangle 161 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 12;
+flex-grow: 0;
+
+
+/* Rectangle 162 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 13;
+flex-grow: 0;
+
+
+/* Rectangle 163 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 14;
+flex-grow: 0;
+
+
+/* Rectangle 164 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 15;
+flex-grow: 0;
+
+
+/* Rectangle 165 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 16;
+flex-grow: 0;
+
+
+/* Rectangle 166 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 17;
+flex-grow: 0;
+
+
+/* Rectangle 167 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 18;
+flex-grow: 0;
+
+
+/* Rectangle 168 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 19;
+flex-grow: 0;
+
+
+/* Rectangle 169 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 20;
+flex-grow: 0;
+
+
+/* Rectangle 170 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 21;
+flex-grow: 0;
+
+
+/* Rectangle 171 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 22;
+flex-grow: 0;
+
+
+/* Rectangle 172 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 23;
+flex-grow: 0;
+
+
+/* Rectangle 173 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 24;
+flex-grow: 0;
+
+
+/* Rectangle 174 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 25;
+flex-grow: 0;
+
+
+/* Rectangle 175 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 26;
+flex-grow: 0;
+
+
+/* Rectangle 176 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 27;
+flex-grow: 0;
+
+
+/* Rectangle 177 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 28;
+flex-grow: 0;
+
+
+/* Frame 20846 */
+
+/* Auto layout */
+display: flex;
+flex-direction: column;
+align-items: flex-start;
+padding: 0px;
+gap: 40px;
+
+width: 1px;
+height: 1149px;
+
+
+/* Inside auto layout */
+flex: none;
+order: 1;
+flex-grow: 0;
+
+
+/* Rectangle 149 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 0;
+flex-grow: 0;
+
+
+/* Rectangle 150 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 1;
+flex-grow: 0;
+
+
+/* Rectangle 151 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 2;
+flex-grow: 0;
+
+
+/* Rectangle 152 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 3;
+flex-grow: 0;
+
+
+/* Rectangle 153 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 4;
+flex-grow: 0;
+
+
+/* Rectangle 154 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 5;
+flex-grow: 0;
+
+
+/* Rectangle 155 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 6;
+flex-grow: 0;
+
+
+/* Rectangle 156 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 7;
+flex-grow: 0;
+
+
+/* Rectangle 157 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 8;
+flex-grow: 0;
+
+
+/* Rectangle 158 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 9;
+flex-grow: 0;
+
+
+/* Rectangle 159 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 10;
+flex-grow: 0;
+
+
+/* Rectangle 160 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 11;
+flex-grow: 0;
+
+
+/* Rectangle 161 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 12;
+flex-grow: 0;
+
+
+/* Rectangle 162 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 13;
+flex-grow: 0;
+
+
+/* Rectangle 163 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 14;
+flex-grow: 0;
+
+
+/* Rectangle 164 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 15;
+flex-grow: 0;
+
+
+/* Rectangle 165 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 16;
+flex-grow: 0;
+
+
+/* Rectangle 166 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 17;
+flex-grow: 0;
+
+
+/* Rectangle 167 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 18;
+flex-grow: 0;
+
+
+/* Rectangle 168 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 19;
+flex-grow: 0;
+
+
+/* Rectangle 169 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 20;
+flex-grow: 0;
+
+
+/* Rectangle 170 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 21;
+flex-grow: 0;
+
+
+/* Rectangle 171 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 22;
+flex-grow: 0;
+
+
+/* Rectangle 172 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 23;
+flex-grow: 0;
+
+
+/* Rectangle 173 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 24;
+flex-grow: 0;
+
+
+/* Rectangle 174 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 25;
+flex-grow: 0;
+
+
+/* Rectangle 175 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 26;
+flex-grow: 0;
+
+
+/* Rectangle 176 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 27;
+flex-grow: 0;
+
+
+/* Rectangle 177 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 28;
+flex-grow: 0;
+
+
+/* Frame 20847 */
+
+/* Auto layout */
+display: flex;
+flex-direction: column;
+align-items: flex-start;
+padding: 0px;
+gap: 40px;
+
+width: 1px;
+height: 1149px;
+
+
+/* Inside auto layout */
+flex: none;
+order: 2;
+flex-grow: 0;
+
+
+/* Rectangle 149 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 0;
+flex-grow: 0;
+
+
+/* Rectangle 150 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 1;
+flex-grow: 0;
+
+
+/* Rectangle 151 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 2;
+flex-grow: 0;
+
+
+/* Rectangle 152 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 3;
+flex-grow: 0;
+
+
+/* Rectangle 153 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 4;
+flex-grow: 0;
+
+
+/* Rectangle 154 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 5;
+flex-grow: 0;
+
+
+/* Rectangle 155 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 6;
+flex-grow: 0;
+
+
+/* Rectangle 156 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 7;
+flex-grow: 0;
+
+
+/* Rectangle 157 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 8;
+flex-grow: 0;
+
+
+/* Rectangle 158 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 9;
+flex-grow: 0;
+
+
+/* Rectangle 159 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 10;
+flex-grow: 0;
+
+
+/* Rectangle 160 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 11;
+flex-grow: 0;
+
+
+/* Rectangle 161 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 12;
+flex-grow: 0;
+
+
+/* Rectangle 162 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 13;
+flex-grow: 0;
+
+
+/* Rectangle 163 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 14;
+flex-grow: 0;
+
+
+/* Rectangle 164 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 15;
+flex-grow: 0;
+
+
+/* Rectangle 165 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 16;
+flex-grow: 0;
+
+
+/* Rectangle 166 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 17;
+flex-grow: 0;
+
+
+/* Rectangle 167 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 18;
+flex-grow: 0;
+
+
+/* Rectangle 168 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 19;
+flex-grow: 0;
+
+
+/* Rectangle 169 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 20;
+flex-grow: 0;
+
+
+/* Rectangle 170 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 21;
+flex-grow: 0;
+
+
+/* Rectangle 171 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 22;
+flex-grow: 0;
+
+
+/* Rectangle 172 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 23;
+flex-grow: 0;
+
+
+/* Rectangle 173 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 24;
+flex-grow: 0;
+
+
+/* Rectangle 174 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 25;
+flex-grow: 0;
+
+
+/* Rectangle 175 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 26;
+flex-grow: 0;
+
+
+/* Rectangle 176 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 27;
+flex-grow: 0;
+
+
+/* Rectangle 177 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 28;
+flex-grow: 0;
+
+
+/* Frame 20848 */
+
+/* Auto layout */
+display: flex;
+flex-direction: column;
+align-items: flex-start;
+padding: 0px;
+gap: 40px;
+
+width: 1px;
+height: 1067px;
+
+
+/* Inside auto layout */
+flex: none;
+order: 3;
+flex-grow: 0;
+
+
+/* Rectangle 149 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 0;
+flex-grow: 0;
+
+
+/* Rectangle 150 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 1;
+flex-grow: 0;
+
+
+/* Rectangle 151 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 2;
+flex-grow: 0;
+
+
+/* Rectangle 152 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 3;
+flex-grow: 0;
+
+
+/* Rectangle 153 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 4;
+flex-grow: 0;
+
+
+/* Rectangle 154 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 5;
+flex-grow: 0;
+
+
+/* Rectangle 155 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 6;
+flex-grow: 0;
+
+
+/* Rectangle 156 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 7;
+flex-grow: 0;
+
+
+/* Rectangle 157 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 8;
+flex-grow: 0;
+
+
+/* Rectangle 158 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 9;
+flex-grow: 0;
+
+
+/* Rectangle 159 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 10;
+flex-grow: 0;
+
+
+/* Rectangle 160 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 11;
+flex-grow: 0;
+
+
+/* Rectangle 163 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 12;
+flex-grow: 0;
+
+
+/* Rectangle 164 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 13;
+flex-grow: 0;
+
+
+/* Rectangle 165 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 14;
+flex-grow: 0;
+
+
+/* Rectangle 166 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 15;
+flex-grow: 0;
+
+
+/* Rectangle 167 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 16;
+flex-grow: 0;
+
+
+/* Rectangle 168 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 17;
+flex-grow: 0;
+
+
+/* Rectangle 169 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 18;
+flex-grow: 0;
+
+
+/* Rectangle 170 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 19;
+flex-grow: 0;
+
+
+/* Rectangle 171 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 20;
+flex-grow: 0;
+
+
+/* Rectangle 172 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 21;
+flex-grow: 0;
+
+
+/* Rectangle 173 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 22;
+flex-grow: 0;
+
+
+/* Rectangle 174 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 23;
+flex-grow: 0;
+
+
+/* Rectangle 175 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 24;
+flex-grow: 0;
+
+
+/* Rectangle 176 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 25;
+flex-grow: 0;
+
+
+/* Rectangle 177 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 26;
+flex-grow: 0;
+
+
+/* Frame 20849 */
+
+/* Auto layout */
+display: flex;
+flex-direction: column;
+align-items: flex-start;
+padding: 0px;
+gap: 40px;
+
+width: 1px;
+height: 1067px;
+
+
+/* Inside auto layout */
+flex: none;
+order: 4;
+flex-grow: 0;
+
+
+/* Rectangle 149 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 0;
+flex-grow: 0;
+
+
+/* Rectangle 150 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 1;
+flex-grow: 0;
+
+
+/* Rectangle 151 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 2;
+flex-grow: 0;
+
+
+/* Rectangle 152 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 3;
+flex-grow: 0;
+
+
+/* Rectangle 153 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 4;
+flex-grow: 0;
+
+
+/* Rectangle 154 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 5;
+flex-grow: 0;
+
+
+/* Rectangle 155 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 6;
+flex-grow: 0;
+
+
+/* Rectangle 156 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 7;
+flex-grow: 0;
+
+
+/* Rectangle 157 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 8;
+flex-grow: 0;
+
+
+/* Rectangle 158 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 9;
+flex-grow: 0;
+
+
+/* Rectangle 159 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 10;
+flex-grow: 0;
+
+
+/* Rectangle 160 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 11;
+flex-grow: 0;
+
+
+/* Rectangle 163 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 12;
+flex-grow: 0;
+
+
+/* Rectangle 164 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 13;
+flex-grow: 0;
+
+
+/* Rectangle 165 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 14;
+flex-grow: 0;
+
+
+/* Rectangle 166 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 15;
+flex-grow: 0;
+
+
+/* Rectangle 167 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 16;
+flex-grow: 0;
+
+
+/* Rectangle 168 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 17;
+flex-grow: 0;
+
+
+/* Rectangle 169 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 18;
+flex-grow: 0;
+
+
+/* Rectangle 170 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 19;
+flex-grow: 0;
+
+
+/* Rectangle 171 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 20;
+flex-grow: 0;
+
+
+/* Rectangle 172 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 21;
+flex-grow: 0;
+
+
+/* Rectangle 173 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 22;
+flex-grow: 0;
+
+
+/* Rectangle 174 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 23;
+flex-grow: 0;
+
+
+/* Rectangle 175 */
+
+width: 1px;
+height: 1px;
+
+background: #52525B;
+
+/* Inside auto layout */
+flex: none;
+order: 24;
+flex-grow: 0;
+
+
+/* Rectangle 176 */
+
+width: 1px;
+height:

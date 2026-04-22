@@ -1,16 +1,18 @@
 :root {
-  --bg: #060e20;
-  --panel: #0b1429;
-  --panel-2: #101a31;
-  --line: #1d2943;
-  --line-2: #2a3857;
-  --text: #d8e0f5;
-  --text-soft: #98a6c6;
-  --primary: #98a0ff;
-  --secondary: #53ddfc;
-  --warning: #ffb46b;
-  --danger: #ff7898;
-  --success: #71f29d;
+  --bg: #0a0a0a;
+  --panel: #111113;
+  --panel-2: #17171b;
+  --panel-3: #1d1d23;
+  --line: rgba(82, 82, 91, 0.34);
+  --line-2: #52525b;
+  --text: #f4f4f5;
+  --text-soft: #a1a1aa;
+  --text-dim: #71717a;
+  --primary: #7dc5ff;
+  --secondary: #9ae6ff;
+  --warning: #f6c453;
+  --danger: #ff7b86;
+  --success: #54d39a;
   --font-display: 'Space Grotesk', 'PingFang SC', 'Hiragino Sans GB', sans-serif;
   --font-body: 'Inter', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   --font-mono: 'JetBrains Mono', 'SFMono-Regular', 'Menlo', monospace;
@@ -32,14 +34,23 @@ body {
 }
 
 body {
+  position: relative;
   min-height: 100vh;
   overflow: hidden;
-  background:
-    radial-gradient(circle at 20% 0%, rgba(83, 221, 252, 0.08), transparent 20%),
-    radial-gradient(circle at 80% 0%, rgba(152, 160, 255, 0.08), transparent 18%),
-    linear-gradient(180deg, #050b18 0%, var(--bg) 100%);
+  background: var(--bg);
   color: var(--text);
   font: 13px/1.5 var(--font-body);
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: radial-gradient(circle at 1px 1px, rgba(82, 82, 91, 0.42) 1px, transparent 0);
+  background-size: 40px 40px;
+  opacity: 0.22;
+  pointer-events: none;
+  z-index: 0;
 }
 
 button,
@@ -62,6 +73,8 @@ button {
 }
 
 .app-shell {
+  position: relative;
+  z-index: 1;
   height: 100vh;
   display: grid;
   grid-template-rows: 52px minmax(0, 1fr);
@@ -4357,6 +4370,320 @@ button {
   color: #ff9ab1;
 }
 
+/* Figma-inspired tone pass: black canvas, zinc dot grid, flatter panels */
+.app-header {
+  border-bottom-color: var(--line);
+  background: rgba(10, 10, 10, 0.94);
+  backdrop-filter: blur(10px);
+}
+
+.brand-block strong {
+  letter-spacing: -0.03em;
+}
+
+.header-plan-button,
+.header-icon-button,
+.rail-icon-button,
+.recent-project-item,
+.db-ghost-button,
+.db-primary-button,
+.send-button,
+.chat-tool-button,
+.plan-close-button,
+.plan-card-action,
+.db-file-trigger,
+.entry-whitelist-remove,
+.agui-primary-button,
+.agui-secondary-button,
+.db-import-method,
+.db-database-button,
+.db-table-button,
+.db-tab-button {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.header-plan-button,
+.send-button,
+.db-primary-button,
+.agui-primary-button {
+  border-color: rgba(125, 197, 255, 0.28);
+  background: rgba(125, 197, 255, 0.08);
+  color: #d9f3ff;
+}
+
+.header-plan-button:hover,
+.send-button:hover,
+.db-primary-button:hover,
+.agui-primary-button:hover {
+  border-color: rgba(125, 197, 255, 0.48);
+  background: rgba(125, 197, 255, 0.14);
+}
+
+.header-icon-button:hover,
+.rail-icon-button:hover,
+.rail-icon-button.active,
+.recent-project-item:hover,
+.recent-project-item.active,
+.db-ghost-button:hover,
+.agui-secondary-button:hover,
+.chat-tool-button:hover,
+.plan-close-button:hover,
+.plan-card-action:hover,
+.db-file-picker:hover .db-file-trigger,
+.entry-whitelist-remove:hover,
+.db-import-method.active,
+.db-database-button.active,
+.db-table-button.active,
+.db-tab-button.active,
+.agui-repo-option:hover,
+.agui-repo-option.active,
+.agui-app-item:hover,
+.agui-app-item.active,
+.agui-template-item:hover,
+.agui-template-item.active,
+.project-mode-option:hover,
+.project-mode-option.active,
+.devbox-release-item.active,
+.entry-domain-button:hover {
+  border-color: var(--line-2);
+  background: var(--panel-2);
+}
+
+.side-rail,
+.chat-shell,
+.db-nav,
+.db-workspace-header,
+.log-panel-head,
+.chat-form {
+  background: rgba(13, 13, 15, 0.96);
+}
+
+.chat-shell,
+.side-rail,
+.db-nav,
+.db-workspace-header,
+.chat-form,
+.app-header {
+  border-color: var(--line);
+}
+
+.canvas-shell,
+.canvas-workspace,
+.canvas-stage,
+.plan-panel,
+.floating-window,
+.db-panel,
+.log-line-list {
+  background-color: var(--bg);
+}
+
+.canvas-stage {
+  background-image: radial-gradient(circle at 1px 1px, rgba(82, 82, 91, 0.72) 1px, transparent 0);
+  background-size: 40px 40px;
+  background-position: 0 0;
+}
+
+.canvas-workspace {
+  background-image: radial-gradient(circle at 1px 1px, rgba(82, 82, 91, 0.52) 1px, transparent 0);
+  background-size: 40px 40px;
+}
+
+.plan-panel,
+.floating-window {
+  border-color: var(--line-2);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 20%),
+    linear-gradient(180deg, rgba(24, 24, 28, 0.98), rgba(11, 11, 13, 0.98));
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+
+.plan-offer-bar {
+  border-color: rgba(125, 197, 255, 0.22);
+  background: rgba(125, 197, 255, 0.06);
+}
+
+.project-overview-card,
+.project-create-card,
+.db-import-panel,
+.db-backup-mode-panel,
+.db-backup-job-row,
+.db-stat-card,
+.db-panel,
+.db-er-card,
+.db-index-row,
+.db-sql-block,
+.db-config-card,
+.entry-config-card,
+.link-injection-card,
+.agui-card,
+.image-version-item,
+.image-current-chip,
+.entry-domain-button,
+.entry-whitelist-item,
+.resource-slider-field,
+.replica-range-field,
+.container-config-file-item,
+.container-config-file-summary,
+.devbox-ide-item,
+.devbox-webcoding-item,
+.agui-method,
+.agui-repo-option,
+.agui-app-item,
+.agui-template-item,
+.project-mode-option,
+.devbox-release-item,
+.devbox-template-publish-item,
+.metrics-chart-card,
+.metrics-disk-card,
+.metrics-event-item,
+.log-line,
+.node-card {
+  border-color: rgba(82, 82, 91, 0.58);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 18%),
+    rgba(16, 16, 18, 0.96);
+  box-shadow: none;
+}
+
+.project-overview-card:hover,
+.node-card:hover,
+.node-card.active {
+  box-shadow: 0 0 0 1px rgba(125, 197, 255, 0.14);
+}
+
+.project-overview-card:hover {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.03), transparent 18%),
+    rgba(20, 20, 23, 0.98);
+}
+
+.project-overview-icon,
+.project-create-icon,
+.project-mode-icon {
+  border-color: var(--line-2);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.devbox-template-badge,
+.devbox-ide-icon,
+.agui-app-icon,
+.agui-template-icon {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.devbox-template-badge,
+.devbox-ide-icon {
+  color: var(--ide-accent, var(--template-accent, var(--secondary)));
+}
+
+.agui-app-icon {
+  color: var(--app-accent, var(--secondary));
+}
+
+.agui-template-icon {
+  color: var(--template-accent, var(--secondary));
+}
+
+.db-chip,
+.agui-card-pill,
+.agui-repo-chip,
+.devbox-meta-chip,
+.node-badge,
+.node-kind-badge,
+.devbox-template-visibility-badge {
+  border-color: rgba(82, 82, 91, 0.58);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.chat-bubble,
+.agui-input,
+.agui-textarea,
+.agui-select,
+.chat-input,
+.db-file-name,
+.terminal-window-toolbar,
+.terminal-window-screen,
+.skills-command,
+.log-empty-state {
+  border-color: rgba(82, 82, 91, 0.58);
+  background: rgba(16, 16, 18, 0.96);
+}
+
+.chat-bubble {
+  max-width: 92%;
+}
+
+.chat-message.user .chat-bubble {
+  border-color: rgba(125, 197, 255, 0.26);
+  background: rgba(125, 197, 255, 0.06);
+}
+
+.chat-input::placeholder {
+  color: var(--text-dim);
+}
+
+.edge-line-back {
+  stroke: rgba(82, 82, 91, 0.32);
+}
+
+.edge-line {
+  stroke: rgba(161, 161, 170, 0.76);
+}
+
+.edge-line.hovered,
+.edge-line.selected {
+  stroke: rgba(244, 244, 245, 0.92);
+}
+
+.db-er-path {
+  stroke: rgba(161, 161, 170, 0.86);
+}
+
+.node-link-handle,
+.node-control-button {
+  border-color: rgba(82, 82, 91, 0.58);
+  background: rgba(12, 12, 14, 0.98);
+}
+
+.node-link-handle:hover,
+.node-control-button:hover {
+  border-color: currentColor;
+}
+
+.container-meter-track,
+.replica-range-track {
+  border-color: rgba(82, 82, 91, 0.4);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.replica-range-fill,
+.container-meter-fill,
+.metrics-disk-fill {
+  background: linear-gradient(90deg, rgba(125, 197, 255, 0.26), rgba(125, 197, 255, 0.9));
+}
+
+.metrics-chart-grid {
+  stroke: rgba(82, 82, 91, 0.38);
+}
+
+.db-data-table th,
+.db-schema-table th {
+  background: rgba(18, 18, 21, 0.98);
+}
+
+.db-data-table th,
+.db-data-table td,
+.db-schema-table th,
+.db-schema-table td {
+  border-bottom-color: rgba(82, 82, 91, 0.32);
+}
+
+.log-line-level {
+  border-color: rgba(82, 82, 91, 0.58);
+  background: rgba(255, 255, 255, 0.03);
+}
+
 @media (max-width: 1360px) {
   .agui-grid-2,
   .agui-grid-4 {
@@ -4684,4 +5011,44 @@ button {
   .plan-countdown {
     min-width: 0;
   }
+}
+
+/* Final Figma theme overrides for late-defined chat controls */
+.chat-shell {
+  background: rgba(13, 13, 15, 0.96);
+}
+
+.chat-form {
+  border-top-color: var(--line);
+  background: rgba(13, 13, 15, 0.98);
+}
+
+.chat-input {
+  border-color: rgba(82, 82, 91, 0.58);
+  background: rgba(16, 16, 18, 0.96);
+}
+
+.chat-input::placeholder {
+  color: var(--text-dim);
+}
+
+.send-button {
+  border-color: rgba(125, 197, 255, 0.28);
+  background: rgba(125, 197, 255, 0.08);
+  color: #d9f3ff;
+}
+
+.send-button:hover {
+  border-color: rgba(125, 197, 255, 0.48);
+  background: rgba(125, 197, 255, 0.14);
+}
+
+.chat-tool-button {
+  border-color: var(--line);
+  background: var(--panel);
+}
+
+.chat-tool-button:hover {
+  border-color: var(--line-2);
+  background: var(--panel-2);
 }

@@ -10,7 +10,7 @@
     "repo_name": "sealai",
     "url": "https://sealai-yjhjqxcq.sealosgzg.site",
     "deployed_at": "2026-04-01T07:26:22Z",
-    "last_updated_at": "2026-04-15T12:04:22Z"
+    "last_updated_at": "2026-04-21T12:04:46Z"
   },
   "history": [
     {
@@ -119,6 +119,15 @@
       "method": "kubectl-configmap-replace",
       "status": "success",
       "note": "Synced the latest DevBox IDE-entry card changes and Vibe Coding updates to the live Sealos app via ConfigMap replace. The live app.js matched the new IDE shortcuts, Vibe Coding icon/title, and grouped start/workspace/port config flow; rollout completed successfully."
+    },
+    {
+      "at": "2026-04-21T12:04:46Z",
+      "action": "sync-public-assets",
+      "image": "ghcr.io/fanux/sealai:20260402-164429",
+      "configmap": "sealai-ymwsyhbd-public",
+      "method": "kubectl-configmap-replace",
+      "status": "success",
+      "note": "Synced the latest DevBox local-IDE entry and hover auto-expand behavior to the live Sealos app via ConfigMap replace. The live app.js matched the new '连接本地 IDE' entry and the 500ms hover expand behavior; rollout completed successfully."
     }
   ]
 }
